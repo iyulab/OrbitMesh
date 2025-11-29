@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Workflow engine for OrbitMesh with DAG execution, saga compensation, and scheduling</Description>
+    <PackageTags>distributed;workflow;orchestration;saga;dag</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Stateless" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OrbitMesh.Core\OrbitMesh.Core.csproj" />
+  </ItemGroup>
+
+</Project>

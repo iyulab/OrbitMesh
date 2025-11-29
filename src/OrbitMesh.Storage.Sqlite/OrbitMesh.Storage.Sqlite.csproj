@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>SQLite storage provider for OrbitMesh with event sourcing and state persistence</Description>
+    <PackageTags>distributed;storage;sqlite;eventsourcing;persistence</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OrbitMesh.Core\OrbitMesh.Core.csproj" />
+  </ItemGroup>
+
+</Project>
