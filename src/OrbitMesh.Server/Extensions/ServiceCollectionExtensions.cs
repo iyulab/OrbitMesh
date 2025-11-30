@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using OrbitMesh.Server.Hubs;
 using OrbitMesh.Server.Services;
 
@@ -23,8 +24,18 @@ public static class ServiceCollectionExtensions
         services.AddSignalR()
             .AddMessagePackProtocol();
 
-        // Register agent registry (default: in-memory)
+        // Register core services (default: in-memory implementations)
         services.AddSingleton<IAgentRegistry, InMemoryAgentRegistry>();
+        services.AddSingleton<IJobManager, InMemoryJobManager>();
+        services.AddSingleton<IAgentRouter, AgentRouter>();
+        services.AddSingleton<IIdempotencyService, InMemoryIdempotencyService>();
+        services.AddSingleton<IDeadLetterService, InMemoryDeadLetterService>();
+        services.AddSingleton<IProgressService, InMemoryProgressService>();
+        services.AddSingleton<IResilienceService, ResilienceService>();
+
+        // Register dispatcher and orchestrator
+        services.AddSingleton<IJobDispatcher, JobDispatcher>();
+        services.AddSingleton<IJobOrchestrator, JobOrchestrator>();
 
         return new OrbitMeshServerBuilder(services);
     }
@@ -108,6 +119,53 @@ public sealed class OrbitMeshServerBuilder
         _services.Configure(configure);
         return this;
     }
+
+    /// <summary>
+    /// Adds OrbitMesh health checks.
+    /// </summary>
+    /// <param name="pendingJobThreshold">Threshold for degraded job queue status (default: 100).</param>
+    /// <returns>The builder for chaining.</returns>
+    public OrbitMeshServerBuilder AddHealthChecks(int pendingJobThreshold = 100)
+    {
+        _services.AddHealthChecks()
+            .Add(new HealthCheckRegistration(
+                "orbitmesh-agents",
+                sp => new AgentHealthCheck(sp.GetRequiredService<IAgentRegistry>()),
+                HealthStatus.Degraded,
+                ["orbitmesh", "agents"]))
+            .Add(new HealthCheckRegistration(
+                "orbitmesh-jobs",
+                sp => new JobQueueHealthCheck(
+                    sp.GetRequiredService<IJobManager>(),
+                    pendingJobThreshold),
+                HealthStatus.Degraded,
+                ["orbitmesh", "jobs"]));
+
+        return this;
+    }
+
+    /// <summary>
+    /// Adds OrbitMesh health checks with custom configuration.
+    /// </summary>
+    /// <param name="configure">Configuration action for health check options.</param>
+    /// <returns>The builder for chaining.</returns>
+    public OrbitMeshServerBuilder AddHealthChecks(Action<OrbitMeshHealthCheckOptions> configure)
+    {
+        var options = new OrbitMeshHealthCheckOptions();
+        configure(options);
+        return AddHealthChecks(options.PendingJobThreshold);
+    }
+}
+
+/// <summary>
+/// Options for OrbitMesh health checks.
+/// </summary>
+public sealed class OrbitMeshHealthCheckOptions
+{
+    /// <summary>
+    /// Gets or sets the threshold for pending jobs before the health check reports degraded status.
+    /// </summary>
+    public int PendingJobThreshold { get; set; } = 100;
 }
 
 /// <summary>

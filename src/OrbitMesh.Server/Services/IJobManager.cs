@@ -145,5 +145,14 @@ public interface IJobManager
     /// <returns>List of timed out jobs.</returns>
     Task<IReadOnlyList<Job>> GetTimedOutJobsAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Gets jobs with optional status and agent filters.
+    /// </summary>
+    /// <param name="status">Optional status filter.</param>
+    /// <param name="agentId">Optional agent ID filter.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>List of matching jobs.</returns>
+    Task<IReadOnlyList<Job>> GetJobsAsync(JobStatus? status = null, string? agentId = null, CancellationToken cancellationToken = default);
+
     #endregion
 }

@@ -143,6 +143,47 @@ public class JobDispatcher : IJobDispatcher
     }
 
     /// <inheritdoc />
+    public async Task<DispatchResult> DispatchAsync(Job job, AgentInfo agent, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // Validate agent is ready
+            if (agent.Status != AgentStatus.Ready)
+            {
+                Interlocked.Increment(ref _totalFailed);
+                return DispatchResult.Failure($"Agent '{agent.Id}' is not ready (status: {agent.Status})");
+            }
+
+            if (agent.ConnectionId is null)
+            {
+                Interlocked.Increment(ref _totalFailed);
+                return DispatchResult.Failure($"Agent '{agent.Id}' has no connection ID");
+            }
+
+            // Send job to agent via SignalR
+            await _hubContext.Clients
+                .Client(agent.ConnectionId)
+                .ExecuteJobAsync(job.Request, cancellationToken);
+
+            Interlocked.Increment(ref _totalDispatched);
+
+            _logger.LogInformation(
+                "Job dispatched to specific agent. JobId: {JobId}, AgentId: {AgentId}, Command: {Command}",
+                job.Id,
+                agent.Id,
+                job.Request.Command);
+
+            return DispatchResult.Success(agent.Id);
+        }
+        catch (Exception ex)
+        {
+            Interlocked.Increment(ref _totalFailed);
+            _logger.LogError(ex, "Failed to dispatch job to agent. JobId: {JobId}, AgentId: {AgentId}", job.Id, agent.Id);
+            return DispatchResult.Failure($"Dispatch error: {ex.Message}");
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<bool> CancelJobAsync(string jobId, string? reason = null, CancellationToken cancellationToken = default)
     {
         var job = await _jobManager.GetAsync(jobId, cancellationToken);
@@ -183,6 +224,33 @@ public class JobDispatcher : IJobDispatcher
         }
 
         return cancelled;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> SendCancelToAgentAsync(string jobId, string agentId, CancellationToken cancellationToken = default)
+    {
+        var agent = await _agentRegistry.GetAsync(agentId, cancellationToken);
+
+        if (agent?.ConnectionId is null)
+        {
+            _logger.LogWarning("Cannot send cancel to agent without connection. JobId: {JobId}, AgentId: {AgentId}", jobId, agentId);
+            return false;
+        }
+
+        try
+        {
+            await _hubContext.Clients
+                .Client(agent.ConnectionId)
+                .CancelJobAsync(jobId, cancellationToken);
+
+            _logger.LogInformation("Cancel signal sent to agent. JobId: {JobId}, AgentId: {AgentId}", jobId, agentId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send cancel signal to agent. JobId: {JobId}, AgentId: {AgentId}", jobId, agentId);
+            return false;
+        }
     }
 
     /// <inheritdoc />

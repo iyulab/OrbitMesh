@@ -315,5 +315,24 @@ public class InMemoryJobManager : IJobManager
         return Task.FromResult<IReadOnlyList<Job>>(timedOut);
     }
 
+    /// <inheritdoc />
+    public Task<IReadOnlyList<Job>> GetJobsAsync(JobStatus? status = null, string? agentId = null, CancellationToken cancellationToken = default)
+    {
+        var query = _jobs.Values.AsEnumerable();
+
+        if (status.HasValue)
+        {
+            query = query.Where(j => j.Status == status.Value);
+        }
+
+        if (!string.IsNullOrEmpty(agentId))
+        {
+            query = query.Where(j => j.AssignedAgentId == agentId);
+        }
+
+        var jobs = query.ToList();
+        return Task.FromResult<IReadOnlyList<Job>>(jobs);
+    }
+
     #endregion
 }

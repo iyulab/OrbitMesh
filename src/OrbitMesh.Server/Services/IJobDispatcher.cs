@@ -24,6 +24,15 @@ public interface IJobDispatcher
     Task<DispatchResult> DispatchAsync(Job job, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Dispatches a job to a specific agent.
+    /// </summary>
+    /// <param name="job">The job to dispatch.</param>
+    /// <param name="agent">The agent to dispatch to.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The dispatch result.</returns>
+    Task<DispatchResult> DispatchAsync(Job job, AgentInfo agent, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Cancels a job.
     /// </summary>
     /// <param name="jobId">The job ID to cancel.</param>
@@ -31,6 +40,15 @@ public interface IJobDispatcher
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>True if successfully cancelled, false otherwise.</returns>
     Task<bool> CancelJobAsync(string jobId, string? reason = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends a cancel request to a specific agent for a job.
+    /// </summary>
+    /// <param name="jobId">The job ID to cancel.</param>
+    /// <param name="agentId">The agent currently running the job.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if cancel request was sent, false otherwise.</returns>
+    Task<bool> SendCancelToAgentAsync(string jobId, string agentId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets the current queue depth (number of pending jobs).
