@@ -72,5 +72,6 @@ dist/
 *.log
 
 # Local
+claude-docs/
 local-docs/
 research-docs/
