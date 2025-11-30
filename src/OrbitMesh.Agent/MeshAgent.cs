@@ -16,6 +16,7 @@ public sealed class MeshAgent : IMeshAgent
     private readonly AgentInfo _agentInfo;
     private readonly ILogger<MeshAgent> _logger;
     private readonly IHandlerRegistry _handlerRegistry;
+    private readonly JobCancellationManager _cancellationManager = new();
     private readonly TaskCompletionSource _shutdownTcs = new();
     private readonly CancellationTokenSource _heartbeatCts = new();
     private TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(30);
@@ -167,6 +168,9 @@ public sealed class MeshAgent : IMeshAgent
         var startTime = DateTimeOffset.UtcNow;
         JobResult result;
 
+        // Register job for cancellation tracking
+        var cancellationToken = _cancellationManager.RegisterJob(request.Id);
+
         try
         {
             // Acknowledge job receipt
@@ -175,7 +179,7 @@ public sealed class MeshAgent : IMeshAgent
                 request.Id,
                 Id);
 
-            var context = CommandContext.FromRequest(request, Id);
+            var context = CommandContext.FromRequest(request, Id, cancellationToken);
             var handler = _handlerRegistry.GetHandler(request.Command);
 
             if (handler is null)
@@ -188,14 +192,24 @@ public sealed class MeshAgent : IMeshAgent
             }
             else
             {
-                var data = await handler.HandleAsync(context);
+                var data = await handler.HandleAsync(context, cancellationToken);
                 result = JobResult.Success(request.Id, Id, data);
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogInformation("Job cancelled. JobId: {JobId}", request.Id);
+            result = JobResult.Failure(request.Id, Id, "Job was cancelled", "JOB_CANCELLED");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Job execution failed. JobId: {JobId}", request.Id);
             result = JobResult.Failure(request.Id, Id, ex.Message, "EXECUTION_FAILED");
+        }
+        finally
+        {
+            // Remove job from cancellation tracking
+            _cancellationManager.CompleteJob(request.Id);
         }
 
         await _connection.InvokeAsync(nameof(IServerHub.ReportResultAsync), result);
@@ -204,7 +218,20 @@ public sealed class MeshAgent : IMeshAgent
     private Task HandleCancelJobAsync(string jobId)
     {
         _logger.LogInformation("Job cancellation requested. JobId: {JobId}", jobId);
-        // Cancellation will be implemented with CancellationTokenSource tracking
+
+        var cancelled = _cancellationManager.CancelJob(jobId);
+
+        if (cancelled)
+        {
+            _logger.LogInformation("Job cancellation signal sent. JobId: {JobId}", jobId);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "Job not found for cancellation (may have already completed). JobId: {JobId}",
+                jobId);
+        }
+
         return Task.CompletedTask;
     }
 
@@ -284,6 +311,10 @@ public sealed class MeshAgent : IMeshAgent
         }
 
         _disposed = true;
+
+        // Cancel all running jobs
+        _cancellationManager.CancelAllJobs();
+        _cancellationManager.Dispose();
 
         await _heartbeatCts.CancelAsync();
         _heartbeatCts.Dispose();

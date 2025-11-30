@@ -19,6 +19,11 @@ public sealed class CommandContext
     public required string AgentId { get; init; }
 
     /// <summary>
+    /// Cancellation token for cooperative cancellation.
+    /// </summary>
+    public CancellationToken CancellationToken { get; init; }
+
+    /// <summary>
     /// Correlation ID for distributed tracing.
     /// </summary>
     public string? CorrelationId => Request.CorrelationId;
@@ -37,7 +42,19 @@ public sealed class CommandContext
         new()
         {
             Request = request,
-            AgentId = agentId
+            AgentId = agentId,
+            CancellationToken = CancellationToken.None
+        };
+
+    /// <summary>
+    /// Creates a new command context from a job request with cancellation support.
+    /// </summary>
+    public static CommandContext FromRequest(JobRequest request, string agentId, CancellationToken cancellationToken) =>
+        new()
+        {
+            Request = request,
+            AgentId = agentId,
+            CancellationToken = cancellationToken
         };
 
     /// <summary>
