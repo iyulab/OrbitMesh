@@ -81,6 +81,15 @@ public interface IJobManager
     /// <returns>True if successfully requeued, false if max retries exceeded.</returns>
     Task<bool> RequeueAsync(string jobId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Requeues a timed out job for retry.
+    /// </summary>
+    /// <param name="jobId">The job ID.</param>
+    /// <param name="maxTimeoutRetries">Maximum timeout retries allowed.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if successfully requeued, false if max timeout retries exceeded.</returns>
+    Task<bool> RequeueForTimeoutAsync(string jobId, int maxTimeoutRetries, CancellationToken cancellationToken = default);
+
     #endregion
 
     #region Progress Tracking

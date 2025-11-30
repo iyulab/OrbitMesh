@@ -194,6 +194,40 @@ public class InMemoryJobManager : IJobManager
         return Task.FromResult(_jobs.TryUpdate(jobId, updatedJob, job));
     }
 
+    /// <inheritdoc />
+    public Task<bool> RequeueForTimeoutAsync(string jobId, int maxTimeoutRetries, CancellationToken cancellationToken = default)
+    {
+        if (!_jobs.TryGetValue(jobId, out var job))
+        {
+            return Task.FromResult(false);
+        }
+
+        // Can only requeue assigned or running jobs that haven't exceeded max timeout retries
+        if (job.Status != JobStatus.Assigned && job.Status != JobStatus.Running)
+        {
+            return Task.FromResult(false);
+        }
+
+        if (job.TimeoutCount >= maxTimeoutRetries)
+        {
+            return Task.FromResult(false);
+        }
+
+        var updatedJob = job with
+        {
+            Status = JobStatus.Pending,
+            AssignedAgentId = null,
+            AssignedAt = null,
+            StartedAt = null,
+            CompletedAt = null,
+            Error = null,
+            ErrorCode = null,
+            TimeoutCount = job.TimeoutCount + 1
+        };
+
+        return Task.FromResult(_jobs.TryUpdate(jobId, updatedJob, job));
+    }
+
     #endregion
 
     #region Progress Tracking

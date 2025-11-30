@@ -43,4 +43,47 @@ public interface IAgentClient
     /// <param name="reason">Optional reason for the shutdown.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task ShutdownAsync(string? reason = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Delivers a stream item to the agent (for bidirectional streaming).
+    /// </summary>
+    /// <param name="item">The stream item to deliver.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task ReceiveStreamItemAsync(StreamItem item, CancellationToken cancellationToken = default);
+
+    #region Client Results (Bidirectional RPC)
+
+    /// <summary>
+    /// Requests a health check from the agent (Client Results pattern).
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The agent's health response.</returns>
+    Task<AgentHealthResponse> GetHealthAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Requests resource usage information from the agent (Client Results pattern).
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The agent's resource usage.</returns>
+    Task<AgentResourceUsage> GetResourceUsageAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Processes a callback request from the server (Client Results pattern).
+    /// </summary>
+    /// <param name="request">The callback request.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The callback response.</returns>
+    Task<AgentCallbackResponse> ProcessCallbackAsync(
+        AgentCallbackRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Validates a job before execution (Client Results pattern).
+    /// </summary>
+    /// <param name="request">The job request to validate.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if the job can be executed, false otherwise.</returns>
+    Task<bool> ValidateJobAsync(JobRequest request, CancellationToken cancellationToken = default);
+
+    #endregion
 }

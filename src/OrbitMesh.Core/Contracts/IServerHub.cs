@@ -66,6 +66,13 @@ public interface IServerHub
         string agentId,
         IReadOnlyDictionary<string, string> reportedState,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reports a stream item for a streaming job.
+    /// </summary>
+    /// <param name="item">The stream item to publish.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task ReportStreamItemAsync(StreamItem item, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

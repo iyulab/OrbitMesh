@@ -95,6 +95,12 @@ public sealed record Job
     public string? CancellationReason { get; init; }
 
     /// <summary>
+    /// Number of times this job has timed out.
+    /// </summary>
+    [Key(14)]
+    public int TimeoutCount { get; init; } = 0;
+
+    /// <summary>
     /// Whether the job can be retried based on max retries setting.
     /// </summary>
     [IgnoreMember]

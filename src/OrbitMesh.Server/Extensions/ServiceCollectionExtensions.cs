@@ -31,11 +31,21 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IIdempotencyService, InMemoryIdempotencyService>();
         services.AddSingleton<IDeadLetterService, InMemoryDeadLetterService>();
         services.AddSingleton<IProgressService, InMemoryProgressService>();
+        services.AddSingleton<IStreamingService, InMemoryStreamingService>();
         services.AddSingleton<IResilienceService, ResilienceService>();
 
         // Register dispatcher and orchestrator
         services.AddSingleton<IJobDispatcher, JobDispatcher>();
         services.AddSingleton<IJobOrchestrator, JobOrchestrator>();
+
+        // Register client results service for bidirectional RPC
+        services.AddSingleton<IClientResultsService, ClientResultsService>();
+
+        // Register background services with default options
+        services.Configure<WorkItemProcessorOptions>(_ => { });
+        services.Configure<JobTimeoutMonitorOptions>(_ => { });
+        services.AddHostedService<WorkItemProcessor>();
+        services.AddHostedService<JobTimeoutMonitor>();
 
         return new OrbitMeshServerBuilder(services);
     }
@@ -154,6 +164,28 @@ public sealed class OrbitMeshServerBuilder
         var options = new OrbitMeshHealthCheckOptions();
         configure(options);
         return AddHealthChecks(options.PendingJobThreshold);
+    }
+
+    /// <summary>
+    /// Configures the WorkItemProcessor background service.
+    /// </summary>
+    /// <param name="configure">Configuration action.</param>
+    /// <returns>The builder for chaining.</returns>
+    public OrbitMeshServerBuilder ConfigureWorkItemProcessor(Action<WorkItemProcessorOptions> configure)
+    {
+        _services.Configure(configure);
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the JobTimeoutMonitor background service.
+    /// </summary>
+    /// <param name="configure">Configuration action.</param>
+    /// <returns>The builder for chaining.</returns>
+    public OrbitMeshServerBuilder ConfigureJobTimeoutMonitor(Action<JobTimeoutMonitorOptions> configure)
+    {
+        _services.Configure(configure);
+        return this;
     }
 }
 
