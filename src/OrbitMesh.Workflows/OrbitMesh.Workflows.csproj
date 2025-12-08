@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <PackageReference Include="Stateless" />
+    <PackageReference Include="YamlDotNet" />
   </ItemGroup>
 
   <ItemGroup>

@@ -32,6 +32,7 @@
     <PackageVersion Include="Serilog.Sinks.Console" Version="6.0.0" />
 
     <!-- Dependency Injection -->
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.0" />
@@ -45,6 +46,9 @@
     <PackageVersion Include="FluentAssertions" Version="8.0.0" />
     <PackageVersion Include="Verify.Xunit" Version="28.14.1" />
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+
+    <!-- Workflow -->
+    <PackageVersion Include="YamlDotNet" Version="16.3.0" />
 
     <!-- Code Analysis -->
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
