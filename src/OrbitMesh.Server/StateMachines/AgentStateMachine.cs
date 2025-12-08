@@ -20,7 +20,9 @@ public sealed class AgentStateMachine
     /// <summary>
     /// Gets permitted triggers for the current state.
     /// </summary>
+#pragma warning disable CS0618 // PermittedTriggers is obsolete but sync API is preferred here
     public IEnumerable<AgentTrigger> PermittedTriggers => _machine.PermittedTriggers;
+#pragma warning restore CS0618
 
     /// <summary>
     /// Event raised when state changes.

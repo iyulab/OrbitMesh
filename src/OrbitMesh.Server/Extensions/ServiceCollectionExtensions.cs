@@ -5,6 +5,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using OrbitMesh.Server.Hubs;
 using OrbitMesh.Server.Services;
+using OrbitMesh.Server.Services.Adapters;
+using OrbitMesh.Server.Services.Workflows;
+using OrbitMesh.Workflows;
+using OrbitMesh.Workflows.Execution;
+using WorkflowDispatcher = OrbitMesh.Workflows.Execution.IJobDispatcher;
 
 namespace OrbitMesh.Server.Extensions;
 
@@ -35,7 +40,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IResilienceService, ResilienceService>();
 
         // Register dispatcher and orchestrator
-        services.AddSingleton<IJobDispatcher, JobDispatcher>();
+        services.AddSingleton<Services.IJobDispatcher, JobDispatcher>();
         services.AddSingleton<IJobOrchestrator, JobOrchestrator>();
 
         // Register client results service for bidirectional RPC
@@ -187,6 +192,63 @@ public sealed class OrbitMeshServerBuilder
         _services.Configure(configure);
         return this;
     }
+
+    /// <summary>
+    /// Adds workflow engine integration to the server.
+    /// </summary>
+    /// <returns>The builder for chaining.</returns>
+    public OrbitMeshServerBuilder AddWorkflows()
+    {
+        // Add core workflow services
+        _services.AddOrbitMeshWorkflows();
+
+        // Register adapters that bridge server services to workflow interfaces
+        _services.AddSingleton<WorkflowDispatcher, WorkflowJobDispatcherAdapter>();
+        _services.AddSingleton<ISubWorkflowLauncher, WorkflowSubWorkflowLauncherAdapter>();
+
+        // Register trigger services
+        _services.AddSingleton<IWorkflowTriggerService, WorkflowTriggerService>();
+        _services.Configure<ScheduleTriggerOptions>(_ => { });
+        _services.AddHostedService<ScheduleTriggerHostedService>();
+
+        return this;
+    }
+
+    /// <summary>
+    /// Adds workflow engine integration with custom configuration.
+    /// </summary>
+    /// <param name="configure">Configuration action for workflow services.</param>
+    /// <returns>The builder for chaining.</returns>
+    public OrbitMeshServerBuilder AddWorkflows(Action<WorkflowOptions> configure)
+    {
+        AddWorkflows();
+
+        var options = new WorkflowOptions();
+        configure(options);
+
+        // Apply custom options
+        if (options.NotificationSenderType is not null)
+        {
+            var descriptor = _services.FirstOrDefault(d => d.ServiceType == typeof(INotificationSender));
+            if (descriptor is not null)
+            {
+                _services.Remove(descriptor);
+            }
+            _services.AddSingleton(typeof(INotificationSender), options.NotificationSenderType);
+        }
+
+        if (options.ApprovalNotifierType is not null)
+        {
+            var descriptor = _services.FirstOrDefault(d => d.ServiceType == typeof(IApprovalNotifier));
+            if (descriptor is not null)
+            {
+                _services.Remove(descriptor);
+            }
+            _services.AddSingleton(typeof(IApprovalNotifier), options.ApprovalNotifierType);
+        }
+
+        return this;
+    }
 }
 
 /// <summary>
@@ -198,6 +260,46 @@ public sealed class OrbitMeshHealthCheckOptions
     /// Gets or sets the threshold for pending jobs before the health check reports degraded status.
     /// </summary>
     public int PendingJobThreshold { get; set; } = 100;
+}
+
+/// <summary>
+/// Options for workflow engine configuration.
+/// </summary>
+public sealed class WorkflowOptions
+{
+    /// <summary>
+    /// Gets or sets a custom notification sender type.
+    /// </summary>
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+    public Type? NotificationSenderType { get; set; }
+
+    /// <summary>
+    /// Gets or sets a custom approval notifier type.
+    /// </summary>
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+    public Type? ApprovalNotifierType { get; set; }
+
+    /// <summary>
+    /// Uses a custom notification sender.
+    /// </summary>
+    /// <typeparam name="T">The notification sender type.</typeparam>
+    /// <returns>The options for chaining.</returns>
+    public WorkflowOptions UseNotificationSender<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>() where T : class, INotificationSender
+    {
+        NotificationSenderType = typeof(T);
+        return this;
+    }
+
+    /// <summary>
+    /// Uses a custom approval notifier.
+    /// </summary>
+    /// <typeparam name="T">The approval notifier type.</typeparam>
+    /// <returns>The options for chaining.</returns>
+    public WorkflowOptions UseApprovalNotifier<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>() where T : class, IApprovalNotifier
+    {
+        ApprovalNotifierType = typeof(T);
+        return this;
+    }
 }
 
 /// <summary>

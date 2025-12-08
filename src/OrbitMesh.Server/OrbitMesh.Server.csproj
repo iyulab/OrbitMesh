@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\OrbitMesh.Core\OrbitMesh.Core.csproj" />
+    <ProjectReference Include="..\OrbitMesh.Workflows\OrbitMesh.Workflows.csproj" />
   </ItemGroup>
 
 </Project>
