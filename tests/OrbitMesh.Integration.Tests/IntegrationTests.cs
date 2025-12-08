@@ -41,8 +41,8 @@ public class IntegrationTests
     public void Storage_Types_Are_Available()
     {
         // This test validates the Storage.Sqlite assembly is referenced correctly
-        // Storage implementations will be added in Phase 3
-        typeof(OrbitMesh.Storage.Sqlite.SqliteStorageMarker).Should().NotBeNull();
-        OrbitMesh.Storage.Sqlite.SqliteStorageMarker.IsAvailable.Should().BeTrue();
+        typeof(OrbitMesh.Storage.Sqlite.SqliteOrbitMeshStorage).Should().NotBeNull();
+        typeof(OrbitMesh.Storage.Sqlite.SqliteStorageOptions).Should().NotBeNull();
+        typeof(OrbitMesh.Storage.Sqlite.OrbitMeshDbContext).Should().NotBeNull();
     }
 }
