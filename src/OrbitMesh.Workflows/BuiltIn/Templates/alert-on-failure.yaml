@@ -1,0 +1,34 @@
+# Built-in Alert on Failure Workflow
+# Send alert notification when jobs fail
+
+id: orbit:workflow:alert-on-failure
+name: Alert on Job Failure
+version: "1.0.0"
+description: Send alert notification when jobs fail
+enabled: true
+
+tags:
+  - built-in
+  - alerting
+  - monitoring
+
+triggers:
+  - id: job-failed
+    type: job_completion
+    name: Job Failure Trigger
+    command_pattern: "*"
+    statuses:
+      - Failed
+
+steps:
+  - id: send-alert
+    name: Send Alert Notification
+    type: notify
+    channel: webhook
+    target: "${config.alert_webhook_url}"
+    subject: Job Failure Alert
+    message: |
+      Job ${trigger.jobId} failed on agent ${trigger.agentId}.
+      Command: ${trigger.command}
+      Error: ${trigger.error}
+      Timestamp: ${trigger.timestamp}

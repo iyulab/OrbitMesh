@@ -70,9 +70,7 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
     }
 
     /// <inheritdoc />
-    public async Task<AgentRegistrationResult> RegisterAsync(
-        AgentInfo agentInfo,
-        CancellationToken cancellationToken = default)
+    public async Task<AgentRegistrationResult> RegisterAsync(AgentInfo agentInfo)
     {
         try
         {
@@ -87,15 +85,14 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
                 LastHeartbeat = DateTimeOffset.UtcNow
             };
 
-            await _agentRegistry.RegisterAsync(registeredAgent, cancellationToken);
+            await _agentRegistry.RegisterAsync(registeredAgent);
 
             // Add to capability-based groups
             foreach (var capability in agentInfo.Capabilities)
             {
                 await Groups.AddToGroupAsync(
                     Context.ConnectionId,
-                    $"capability:{capability.Name}",
-                    cancellationToken);
+                    $"capability:{capability.Name}");
             }
 
             // Add to agent group if specified
@@ -103,8 +100,7 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
             {
                 await Groups.AddToGroupAsync(
                     Context.ConnectionId,
-                    $"group:{agentInfo.Group}",
-                    cancellationToken);
+                    $"group:{agentInfo.Group}");
             }
 
             _logger.LogInformation(
@@ -134,9 +130,9 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
     }
 
     /// <inheritdoc />
-    public async Task HeartbeatAsync(string agentId, CancellationToken cancellationToken = default)
+    public async Task HeartbeatAsync(string agentId)
     {
-        await _agentRegistry.UpdateHeartbeatAsync(agentId, DateTimeOffset.UtcNow, cancellationToken);
+        await _agentRegistry.UpdateHeartbeatAsync(agentId, DateTimeOffset.UtcNow);
 
         _logger.LogDebug("Heartbeat received. AgentId: {AgentId}", agentId);
     }

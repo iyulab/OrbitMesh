@@ -1,0 +1,51 @@
+# Built-in Service Restart Workflow
+# Restarts a service and verifies health
+
+id: orbit:workflow:service-restart
+name: Service Restart
+version: "1.0.0"
+description: Restart a service and verify health
+enabled: true
+
+tags:
+  - built-in
+  - service
+  - restart
+
+triggers:
+  - id: manual-restart
+    type: manual
+    name: Manual Restart Trigger
+    input_schema:
+      service_name:
+        type: string
+        required: true
+        description: Name of the service to restart
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern
+
+steps:
+  - id: restart-service
+    name: Restart Service
+    type: job
+    command: orbit:service.restart
+    pattern: "${input.agent_pattern}"
+    payload:
+      serviceName: "${input.service_name}"
+      timeoutSeconds: 60
+    timeout: 90s
+    output_variable: restartResult
+
+  - id: verify-status
+    name: Verify Service Status
+    type: job
+    depends_on:
+      - restart-service
+    command: orbit:service.status
+    pattern: "${input.agent_pattern}"
+    payload:
+      serviceName: "${input.service_name}"
+    output_variable: statusResult

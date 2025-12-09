@@ -4,6 +4,39 @@
 [Ll]og/
 [Ll]ogs/
 
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Package manager locks (keep one, ignore others if switching)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# TypeScript cache
+*.tsbuildinfo
+
+# ESLint cache
+.eslintcache
+
+# Vite
+*.local
+
 # Visual Studio
 .vs/
 *.user
@@ -63,7 +96,6 @@ local.settings.json
 # Build outputs
 artifacts/
 publish/
-dist/
 
 # Misc
 *.bak
@@ -75,3 +107,4 @@ dist/
 claude-docs/
 local-docs/
 research-docs/
+nul

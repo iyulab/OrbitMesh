@@ -1,0 +1,99 @@
+# Built-in Agent Update Workflow
+# Check, download, and apply agent updates
+
+id: orbit:workflow:agent-update
+name: Agent Update
+version: "1.0.0"
+description: Check, download, and apply agent updates with optional approval
+enabled: true
+
+tags:
+  - built-in
+  - update
+  - maintenance
+
+error_handling:
+  strategy: stop_on_first_error
+
+triggers:
+  - id: manual-update
+    type: manual
+    name: Manual Update Trigger
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to update
+      require_approval:
+        type: boolean
+        required: false
+        default: true
+        description: Require approval before applying
+
+  - id: scheduled-update
+    type: schedule
+    name: Weekly Update Check
+    cron: "0 0 * * 0"
+    timezone: UTC
+    max_concurrent: 1
+
+steps:
+  - id: check-update
+    name: Check for Updates
+    type: job
+    command: orbit:update.check
+    pattern: "${input.agent_pattern}"
+    output_variable: updateInfo
+
+  - id: download-update
+    name: Download Update Package
+    type: job
+    depends_on:
+      - check-update
+    condition: "${updateInfo.updateAvailable}"
+    command: orbit:update.download
+    pattern: "${input.agent_pattern}"
+    payload:
+      package: "${updateInfo.package}"
+    max_retries: 3
+    retry_delay: 10s
+    output_variable: downloadResult
+
+  - id: approve-update
+    name: Approve Update Application
+    type: approval
+    depends_on:
+      - download-update
+    condition: "${downloadResult.success && input.require_approval}"
+    approvers:
+      - admin
+      - ops-team
+    required_approvals: 1
+    message: "Update downloaded successfully. Version: ${updateInfo.package.version}. Approve to apply."
+    timeout: 24h
+    timeout_action: reject
+
+  - id: apply-update
+    name: Apply Update
+    type: job
+    depends_on:
+      - approve-update
+    condition: "${downloadResult.success}"
+    command: orbit:update.apply
+    pattern: "${input.agent_pattern}"
+    payload:
+      packagePath: "${downloadResult.localPath}"
+      targetVersion: "${updateInfo.package.version}"
+      createBackup: true
+      restartAfterApply: true
+    output_variable: applyResult
+
+  - id: verify-update
+    name: Verify Update Status
+    type: job
+    depends_on:
+      - apply-update
+    command: orbit:update.status
+    pattern: "${input.agent_pattern}"
+    output_variable: updateStatus

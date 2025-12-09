@@ -14,4 +14,8 @@
     <ProjectReference Include="..\OrbitMesh.Core\OrbitMesh.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="BuiltIn\Templates\*.yaml" />
+  </ItemGroup>
+
 </Project>

@@ -37,6 +37,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IDeadLetterService, InMemoryDeadLetterService>();
         services.AddSingleton<IProgressService, InMemoryProgressService>();
         services.AddSingleton<IStreamingService, InMemoryStreamingService>();
+        services.AddSingleton<ResilienceOptions>();
         services.AddSingleton<IResilienceService, ResilienceService>();
 
         // Register dispatcher and orchestrator
@@ -45,6 +46,12 @@ public static class ServiceCollectionExtensions
 
         // Register client results service for bidirectional RPC
         services.AddSingleton<IClientResultsService, ClientResultsService>();
+
+        // Register API token service
+        services.AddSingleton<IApiTokenService, InMemoryApiTokenService>();
+
+        // Register dashboard notifier for real-time UI updates
+        services.AddSingleton<IDashboardNotifier, DashboardNotifier>();
 
         // Register background services with default options
         services.Configure<WorkItemProcessorOptions>(_ => { });
@@ -318,5 +325,18 @@ public static class EndpointRouteBuilderExtensions
         string pattern = "/agent")
     {
         return endpoints.MapHub<AgentHub>(pattern);
+    }
+
+    /// <summary>
+    /// Maps the OrbitMesh dashboard hub endpoint for real-time UI updates.
+    /// </summary>
+    /// <param name="endpoints">The endpoint route builder.</param>
+    /// <param name="pattern">The URL pattern for the hub (default: /hub/dashboard).</param>
+    /// <returns>The hub endpoint convention builder.</returns>
+    public static HubEndpointConventionBuilder MapOrbitMeshDashboardHub(
+        this IEndpointRouteBuilder endpoints,
+        string pattern = "/hub/dashboard")
+    {
+        return endpoints.MapHub<DashboardHub>(pattern);
     }
 }

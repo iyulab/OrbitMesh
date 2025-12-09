@@ -11,11 +11,8 @@ public interface IServerHub
     /// Registers an agent with the server.
     /// </summary>
     /// <param name="agentInfo">The agent information.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Registration confirmation with server-assigned data.</returns>
-    Task<AgentRegistrationResult> RegisterAsync(
-        AgentInfo agentInfo,
-        CancellationToken cancellationToken = default);
+    Task<AgentRegistrationResult> RegisterAsync(AgentInfo agentInfo);
 
     /// <summary>
     /// Unregisters an agent from the server.
@@ -28,8 +25,7 @@ public interface IServerHub
     /// Sends a heartbeat to the server.
     /// </summary>
     /// <param name="agentId">The agent ID.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    Task HeartbeatAsync(string agentId, CancellationToken cancellationToken = default);
+    Task HeartbeatAsync(string agentId);
 
     /// <summary>
     /// Acknowledges receipt of a job assignment.

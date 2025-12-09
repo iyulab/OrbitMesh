@@ -1,0 +1,57 @@
+# Built-in File Sync Workflow
+# Synchronize files from remote source to agents
+
+id: orbit:workflow:file-sync
+name: File Synchronization
+version: "1.0.0"
+description: Synchronize files from remote source to agents
+enabled: true
+
+tags:
+  - built-in
+  - sync
+  - file
+
+triggers:
+  - id: manual-sync
+    type: manual
+    name: Manual Sync Trigger
+    input_schema:
+      source_url:
+        type: string
+        required: true
+        description: Source URL for sync (must have manifest.json)
+      destination_path:
+        type: string
+        required: true
+        description: Destination path on agents
+      delete_orphans:
+        type: boolean
+        required: false
+        default: false
+        description: Delete files not in source
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern
+
+  - id: scheduled-sync
+    type: schedule
+    name: Hourly Sync
+    interval: 1h
+    max_concurrent: 1
+
+steps:
+  - id: sync-files
+    name: Synchronize Files
+    type: job
+    command: orbit:file.sync
+    pattern: "${input.agent_pattern}"
+    payload:
+      source: "${input.source_url}"
+      destination: "${input.destination_path}"
+      deleteOrphans: "${input.delete_orphans}"
+    max_retries: 3
+    retry_delay: 10s
+    output_variable: syncResult

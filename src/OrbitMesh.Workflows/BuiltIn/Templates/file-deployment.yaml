@@ -1,0 +1,52 @@
+# Built-in File Deployment Workflow
+# Downloads files to agents from a remote source
+
+id: orbit:workflow:file-deployment
+name: File Deployment
+version: "1.0.0"
+description: Deploy files from remote source to agents
+enabled: true
+
+tags:
+  - built-in
+  - deployment
+  - file
+
+triggers:
+  - id: manual-deploy
+    type: manual
+    name: Manual Deployment Trigger
+    input_schema:
+      source_url:
+        type: string
+        required: true
+        description: URL to download file from
+      destination_path:
+        type: string
+        required: true
+        description: Destination path on agents
+      checksum:
+        type: string
+        required: false
+        description: SHA256 checksum for verification
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to deploy to
+
+steps:
+  - id: download-file
+    name: Download File to Agents
+    type: job
+    command: orbit:file.download
+    pattern: "${input.agent_pattern}"
+    payload:
+      sourcePath: "${input.source_url}"
+      destinationPath: "${input.destination_path}"
+      checksum: "${input.checksum}"
+      overwrite: true
+      createDirectories: true
+    max_retries: 3
+    retry_delay: 5s
+    output_variable: downloadResults

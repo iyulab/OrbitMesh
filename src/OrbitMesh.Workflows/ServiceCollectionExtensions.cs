@@ -38,6 +38,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SubWorkflowStepExecutor>();
         services.AddSingleton<NotifyStepExecutor>();
 
+        // Default no-op external services (can be overridden by AddNotificationSender, etc.)
+        services.AddSingleton<INotificationSender, NoOpNotificationSender>();
+        services.AddSingleton<IApprovalNotifier, NoOpApprovalNotifier>();
+        services.AddSingleton<ISubWorkflowLauncher, NoOpSubWorkflowLauncher>();
+
         // Parsing
         services.AddSingleton<WorkflowParser>();
         services.AddSingleton<WorkflowSerializer>();

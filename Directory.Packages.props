@@ -31,9 +31,10 @@
     <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageVersion Include="Serilog.Sinks.Console" Version="6.0.0" />
 
-    <!-- Dependency Injection -->
+    <!-- Dependency Injection / Hosting -->
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
@@ -50,7 +51,13 @@
     <!-- Workflow -->
     <PackageVersion Include="YamlDotNet" Version="16.3.0" />
 
+    <!-- API Documentation -->
+    <PackageVersion Include="Swashbuckle.AspNetCore" Version="7.3.1" />
+
     <!-- Code Analysis -->
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
+
+    <!-- System Services -->
+    <PackageVersion Include="System.ServiceProcess.ServiceController" Version="9.0.0" />
   </ItemGroup>
 </Project>

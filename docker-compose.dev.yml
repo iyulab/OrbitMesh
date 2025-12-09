@@ -1,0 +1,40 @@
+version: '3.8'
+
+# Development override - use for local development with hot reload
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  orbit-server:
+    build:
+      context: .
+      dockerfile: products/orbit-server/Dockerfile
+      target: build
+    volumes:
+      - .:/src
+      - orbit-nuget:/root/.nuget
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - DOTNET_USE_POLLING_FILE_WATCHER=true
+    command: dotnet watch run --project /src/products/orbit-server/orbit-server.csproj
+    ports:
+      - "5000:5000"
+
+  orbit-agent-1:
+    build:
+      context: .
+      dockerfile: products/orbit-agent/Dockerfile
+      target: build
+    volumes:
+      - .:/src
+      - orbit-nuget:/root/.nuget
+    environment:
+      - OrbitMesh__ServerUrl=http://orbit-server:5000/agent
+      - OrbitMesh__AgentName=dev-agent-1
+      - DOTNET_USE_POLLING_FILE_WATCHER=true
+    command: dotnet watch run --project /src/products/orbit-agent/orbit-agent.csproj
+    depends_on:
+      - orbit-server
+
+volumes:
+  orbit-nuget:
+    driver: local

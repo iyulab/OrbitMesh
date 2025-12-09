@@ -1,0 +1,85 @@
+# Built-in Rolling Deployment Workflow
+# Deploy files and restart services with rolling strategy
+
+id: orbit:workflow:rolling-deployment
+name: Rolling Deployment
+version: "1.0.0"
+description: Deploy files and restart services with rolling strategy
+enabled: true
+
+tags:
+  - built-in
+  - deployment
+  - rolling
+
+error_handling:
+  strategy: stop_on_first_error
+
+triggers:
+  - id: manual-deploy
+    type: manual
+    name: Manual Deployment Trigger
+    input_schema:
+      source_url:
+        type: string
+        required: true
+        description: Source URL for deployment package
+      destination_path:
+        type: string
+        required: true
+        description: Destination path on agents
+      service_name:
+        type: string
+        required: true
+        description: Service to restart after deployment
+      version:
+        type: string
+        required: true
+        description: Version being deployed
+
+steps:
+  - id: download-package
+    name: Download Deployment Package
+    type: job
+    command: orbit:file.download
+    pattern: "*"
+    payload:
+      sourcePath: "${input.source_url}"
+      destinationPath: "${input.destination_path}"
+      overwrite: true
+      createDirectories: true
+    max_retries: 3
+    output_variable: downloadResult
+
+  - id: stop-service
+    name: Stop Service
+    type: job
+    depends_on:
+      - download-package
+    command: orbit:service.stop
+    pattern: "*"
+    payload:
+      serviceName: "${input.service_name}"
+      timeoutSeconds: 60
+    output_variable: stopResult
+
+  - id: start-service
+    name: Start Service
+    type: job
+    depends_on:
+      - stop-service
+    command: orbit:service.start
+    pattern: "*"
+    payload:
+      serviceName: "${input.service_name}"
+      timeoutSeconds: 60
+    output_variable: startResult
+
+  - id: health-check
+    name: Verify Health After Deployment
+    type: job
+    depends_on:
+      - start-service
+    command: orbit:system.health
+    pattern: "*"
+    output_variable: healthResult

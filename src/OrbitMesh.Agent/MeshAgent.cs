@@ -72,10 +72,11 @@ public sealed class MeshAgent : IMeshAgent
 
         await _connection.StartAsync(cancellationToken);
 
-        // Register with the server
-        var result = await _connection.InvokeAsync<AgentRegistrationResult>(
+        // Register with the server using InvokeCoreAsync to explicitly pass arguments array.
+        // The server's CancellationToken parameter is injected by SignalR, not passed by client.
+        var result = await _connection.InvokeCoreAsync<AgentRegistrationResult>(
             nameof(IServerHub.RegisterAsync),
-            _agentInfo,
+            [_agentInfo],
             cancellationToken);
 
         if (!result.Success)

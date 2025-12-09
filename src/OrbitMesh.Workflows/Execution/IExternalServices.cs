@@ -148,3 +148,65 @@ public interface IApprovalNotifier
         string? message,
         CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// No-op notification sender that logs notifications without sending them.
+/// Used as a default when no real notification sender is configured.
+/// </summary>
+public sealed class NoOpNotificationSender : INotificationSender
+{
+    /// <inheritdoc />
+    public Task<bool> SendAsync(
+        NotifyChannel channel,
+        string target,
+        string message,
+        string? subject,
+        CancellationToken cancellationToken = default)
+    {
+        // No-op: just return success without actually sending
+        return Task.FromResult(true);
+    }
+}
+
+/// <summary>
+/// No-op approval notifier that does nothing.
+/// Used as a default when no real approval notifier is configured.
+/// </summary>
+public sealed class NoOpApprovalNotifier : IApprovalNotifier
+{
+    /// <inheritdoc />
+    public Task NotifyApproversAsync(
+        string workflowInstanceId,
+        string stepId,
+        IReadOnlyList<string> approvers,
+        string? message,
+        CancellationToken cancellationToken = default)
+    {
+        // No-op: do nothing
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// No-op sub-workflow launcher that always fails.
+/// Used as a default when no real sub-workflow launcher is configured.
+/// </summary>
+public sealed class NoOpSubWorkflowLauncher : ISubWorkflowLauncher
+{
+    /// <inheritdoc />
+    public Task<SubWorkflowResult> LaunchAsync(
+        string workflowId,
+        string? version,
+        IReadOnlyDictionary<string, object?>? input,
+        string parentInstanceId,
+        string parentStepId,
+        bool waitForCompletion,
+        CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(new SubWorkflowResult
+        {
+            Success = false,
+            Error = "No sub-workflow launcher configured"
+        });
+    }
+}

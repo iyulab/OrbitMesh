@@ -1,0 +1,28 @@
+# Built-in Health Check Workflow
+# Monitors agent health status at regular intervals
+
+id: orbit:workflow:health-check
+name: Agent Health Check
+version: "1.0.0"
+description: Monitors agent health status and reports unhealthy agents
+enabled: true
+
+tags:
+  - built-in
+  - monitoring
+  - health
+
+triggers:
+  - id: health-schedule
+    type: schedule
+    name: Health Check Schedule
+    interval: 5m
+    max_concurrent: 1
+
+steps:
+  - id: check-health
+    name: Check Agent Health
+    type: job
+    command: orbit:system.health
+    pattern: "*"
+    output_variable: healthResults

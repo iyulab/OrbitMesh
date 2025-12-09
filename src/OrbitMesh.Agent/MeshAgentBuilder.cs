@@ -210,7 +210,7 @@ public sealed class MeshAgentBuilder
     public IMeshAgent Build()
     {
         var connectionBuilder = new HubConnectionBuilder()
-            .WithUrl($"{_serverUrl.TrimEnd('/')}/agent")
+            .WithUrl(_serverUrl)
             .WithAutomaticReconnect()
             .AddMessagePackProtocol();
 
