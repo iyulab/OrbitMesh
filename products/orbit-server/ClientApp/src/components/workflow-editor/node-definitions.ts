@@ -1,5 +1,4 @@
-import type { NodeDefinition, WorkflowNodeType } from './types'
-// NodeCategory import is at the bottom of the file to avoid circular dependency
+import type { NodeDefinition, WorkflowNodeType, NodeCategory } from './types'
 
 /**
  * Node definitions for all available workflow node types.
@@ -664,8 +663,6 @@ export function getNodeDefinition(type: WorkflowNodeType): NodeDefinition | unde
 /**
  * Category metadata for display
  */
-import type { NodeCategory } from './types'
-
 export const CATEGORY_INFO: Record<NodeCategory, { label: string; description: string; icon: string; color: string }> = {
   trigger: {
     label: 'Triggers',
