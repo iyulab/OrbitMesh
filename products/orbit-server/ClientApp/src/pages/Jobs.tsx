@@ -11,7 +11,7 @@ import {
   AlertTriangle,
 } from 'lucide-react'
 import { getJobs, submitJob, cancelJob } from '@/api/client'
-import type { Job, JobStatus } from '@/types'
+import type { JobStatus } from '@/types'
 
 function JobStatusBadge({ status }: { status: JobStatus }) {
   const config: Record<JobStatus, { class: string; icon: React.ComponentType<{ className?: string }> }> = {
