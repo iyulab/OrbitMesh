@@ -511,6 +511,249 @@ public static class WorkflowTemplates
     }
 
     /// <summary>
+    /// Creates a bidirectional file sync workflow with file watch triggers.
+    /// </summary>
+    /// <param name="serverPath">Server-side directory path.</param>
+    /// <param name="agentPath">Agent-side directory path.</param>
+    /// <param name="agentPattern">Agent pattern for targeting.</param>
+    /// <param name="mode">Sync mode: "twoway", "server-to-agents", or "agent-to-server".</param>
+    /// <param name="filter">File filter pattern (default: "*.*").</param>
+    /// <returns>A workflow definition for bidirectional file sync.</returns>
+    public static WorkflowDefinition TwoWayFileSync(
+        string serverPath,
+        string agentPath,
+        string agentPattern = "*",
+        string mode = "twoway",
+        string filter = "*.*")
+    {
+        var triggers = new List<WorkflowTrigger>
+        {
+            new ManualTrigger
+            {
+                Id = "manual-sync",
+                Name = "Manual Sync Trigger"
+            }
+        };
+
+        // Add file watch triggers based on mode
+        if (mode is "twoway" or "server-to-agents")
+        {
+            // Server changes trigger sync to agents
+            triggers.Add(new EventTrigger
+            {
+                Id = "server-change",
+                Name = "Server File Change",
+                EventType = "server:file:changed",
+                Filter = $"path.startsWith('{serverPath}')",
+                InputMapping = new Dictionary<string, string>
+                {
+                    ["changedPath"] = "$.path",
+                    ["changeType"] = "$.type",
+                    ["direction"] = "server-to-agents"
+                }
+            });
+        }
+
+        if (mode is "twoway" or "agent-to-server")
+        {
+            // Agent changes trigger sync to server
+            triggers.Add(new FileWatchTrigger
+            {
+                Id = "agent-change",
+                Name = "Agent File Change",
+                AgentPattern = agentPattern,
+                WatchPath = agentPath,
+                Filter = filter,
+                IncludeSubdirectories = true,
+                ChangeTypes = ["Created", "Modified", "Deleted", "Renamed"],
+                DebounceMs = 1000,
+                InputMapping = new Dictionary<string, string>
+                {
+                    ["changedPath"] = "$.fullPath",
+                    ["changeType"] = "$.changeType",
+                    ["agentId"] = "$.agentId",
+                    ["direction"] = "agent-to-server"
+                }
+            });
+        }
+
+        var steps = new List<WorkflowStep>();
+
+        // Add steps based on mode
+        if (mode is "twoway" or "server-to-agents")
+        {
+            steps.Add(new WorkflowStep
+            {
+                Id = "sync-to-agents",
+                Name = "Sync Server to Agents",
+                Type = StepType.Job,
+                Condition = "${direction == 'server-to-agents' || direction == null}",
+                Config = new JobStepConfig
+                {
+                    Command = "orbit:file:sync",
+                    Pattern = agentPattern,
+                    Payload = new Dictionary<string, object?>
+                    {
+                        ["source"] = serverPath,
+                        ["destination"] = agentPath,
+                        ["deleteOrphans"] = false
+                    }
+                },
+                MaxRetries = 3,
+                RetryDelay = TimeSpan.FromSeconds(5),
+                OutputVariable = "syncToAgentsResult"
+            });
+        }
+
+        if (mode is "twoway" or "agent-to-server")
+        {
+            steps.Add(new WorkflowStep
+            {
+                Id = "upload-to-server",
+                Name = "Upload Changed Files to Server",
+                Type = StepType.Job,
+                Condition = "${direction == 'agent-to-server'}",
+                Config = new JobStepConfig
+                {
+                    Command = "orbit:file:upload",
+                    Pattern = "${agentId}",
+                    Payload = new Dictionary<string, object?>
+                    {
+                        ["sourcePath"] = "${changedPath}",
+                        ["destinationUrl"] = "${serverUploadUrl}",
+                        ["includeChecksum"] = true,
+                        ["overwrite"] = true
+                    }
+                },
+                MaxRetries = 3,
+                RetryDelay = TimeSpan.FromSeconds(5),
+                OutputVariable = "uploadResult"
+            });
+        }
+
+        return new WorkflowDefinition
+        {
+            Id = $"orbit:workflow:twoway-sync-{Guid.NewGuid():N}",
+            Name = "Two-Way File Synchronization",
+            Version = "1.0.0",
+            Description = $"Bidirectional sync between server ({serverPath}) and agents ({agentPath})",
+            Tags = ["built-in", "sync", "file", "twoway", "realtime"],
+            Variables = new Dictionary<string, object?>
+            {
+                ["serverPath"] = serverPath,
+                ["agentPath"] = agentPath,
+                ["mode"] = mode,
+                ["filter"] = filter,
+                ["serverUploadUrl"] = $"/api/files/upload?path={Uri.EscapeDataString(serverPath)}"
+            },
+            Triggers = triggers.AsReadOnly(),
+            Steps = steps.AsReadOnly(),
+            ErrorHandling = new WorkflowErrorHandling
+            {
+                Strategy = ErrorStrategy.ContinueAndAggregate
+            }
+        };
+    }
+
+    /// <summary>
+    /// Creates a file watch workflow that triggers on agent file changes.
+    /// </summary>
+    /// <param name="watchPath">Directory path to watch on agents.</param>
+    /// <param name="agentPattern">Agent pattern for targeting.</param>
+    /// <param name="filter">File filter pattern.</param>
+    /// <param name="onChangeCommand">Command to execute when files change.</param>
+    /// <param name="changeTypes">Types of changes to watch for.</param>
+    /// <returns>A workflow definition for file watch.</returns>
+    public static WorkflowDefinition FileWatch(
+        string watchPath,
+        string agentPattern = "*",
+        string filter = "*.*",
+        string onChangeCommand = "orbit:system:ping",
+        IReadOnlyList<string>? changeTypes = null)
+    {
+        changeTypes ??= ["Created", "Modified", "Deleted"];
+
+        return new WorkflowDefinition
+        {
+            Id = $"orbit:workflow:file-watch-{Guid.NewGuid():N}",
+            Name = "File Watch Workflow",
+            Version = "1.0.0",
+            Description = $"Execute actions when files change in {watchPath}",
+            Tags = ["built-in", "watch", "file", "trigger"],
+            Variables = new Dictionary<string, object?>
+            {
+                ["watchPath"] = watchPath,
+                ["filter"] = filter,
+                ["onChangeCommand"] = onChangeCommand
+            },
+            Triggers =
+            [
+                new FileWatchTrigger
+                {
+                    Id = "file-watch",
+                    Name = "File Change Trigger",
+                    AgentPattern = agentPattern,
+                    WatchPath = watchPath,
+                    Filter = filter,
+                    IncludeSubdirectories = true,
+                    ChangeTypes = changeTypes.ToList(),
+                    DebounceMs = 1000,
+                    InputMapping = new Dictionary<string, string>
+                    {
+                        ["changedPath"] = "$.fullPath",
+                        ["changeType"] = "$.changeType",
+                        ["fileName"] = "$.name",
+                        ["agentId"] = "$.agentId"
+                    }
+                },
+                new ManualTrigger
+                {
+                    Id = "manual",
+                    Name = "Manual Trigger",
+                    InputSchema = new Dictionary<string, InputParameterDefinition>
+                    {
+                        ["changedPath"] = new() { Type = InputParameterType.StringValue, Required = true, Description = "Path to the changed file" },
+                        ["changeType"] = new() { Type = InputParameterType.StringValue, Required = true, Description = "Type of change", AllowedValues = ["Created", "Modified", "Deleted", "Renamed"] }
+                    }
+                }
+            ],
+            Steps =
+            [
+                new WorkflowStep
+                {
+                    Id = "log-change",
+                    Name = "Log File Change",
+                    Type = StepType.Log,
+                    Config = new LogStepConfig
+                    {
+                        Level = "Info",
+                        Message = "File ${changeType}: ${changedPath} on agent ${agentId}"
+                    }
+                },
+                new WorkflowStep
+                {
+                    Id = "execute-action",
+                    Name = "Execute Change Action",
+                    Type = StepType.Job,
+                    DependsOn = ["log-change"],
+                    Config = new JobStepConfig
+                    {
+                        Command = onChangeCommand,
+                        Pattern = "${agentId}",
+                        Payload = new Dictionary<string, object?>
+                        {
+                            ["triggeredBy"] = "file-change",
+                            ["changedPath"] = "${changedPath}",
+                            ["changeType"] = "${changeType}"
+                        }
+                    },
+                    OutputVariable = "actionResult"
+                }
+            ]
+        };
+    }
+
+    /// <summary>
     /// Creates an alert workflow for monitoring failures.
     /// </summary>
     /// <param name="webhookUrl">Webhook URL for alerts.</param>

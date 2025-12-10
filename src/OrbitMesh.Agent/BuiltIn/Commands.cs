@@ -108,6 +108,27 @@ public static class Commands
 #pragma warning restore CA1724
 
     /// <summary>
+    /// File watch commands for monitoring file system changes.
+    /// </summary>
+    public static class FileWatch
+    {
+        /// <summary>
+        /// Start watching a directory for changes.
+        /// </summary>
+        public const string Start = "orbit:filewatch:start";
+
+        /// <summary>
+        /// Stop watching a directory.
+        /// </summary>
+        public const string Stop = "orbit:filewatch:stop";
+
+        /// <summary>
+        /// List active file watches.
+        /// </summary>
+        public const string List = "orbit:filewatch:list";
+    }
+
+    /// <summary>
     /// Update management commands.
     /// </summary>
     public static class Update

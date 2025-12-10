@@ -259,6 +259,25 @@ public sealed class YamlTrigger
 
     [YamlMember(Alias = "statuses")]
     public List<string>? Statuses { get; set; }
+
+    // File watch trigger properties
+    [YamlMember(Alias = "agent_pattern")]
+    public string? AgentPattern { get; set; }
+
+    [YamlMember(Alias = "watch_path")]
+    public string? WatchPath { get; set; }
+
+    [YamlMember(Alias = "watch_filter")]
+    public string? WatchFilter { get; set; }
+
+    [YamlMember(Alias = "include_subdirectories")]
+    public bool IncludeSubdirectories { get; set; } = true;
+
+    [YamlMember(Alias = "change_types")]
+    public List<string>? ChangeTypes { get; set; }
+
+    [YamlMember(Alias = "debounce_ms")]
+    public int DebounceMs { get; set; } = 1000;
 }
 
 /// <summary>

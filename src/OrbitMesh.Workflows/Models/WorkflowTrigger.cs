@@ -12,6 +12,7 @@ namespace OrbitMesh.Workflows.Models;
 [Union(2, typeof(ManualTrigger))]
 [Union(3, typeof(WebhookTrigger))]
 [Union(4, typeof(JobCompletionTrigger))]
+[Union(5, typeof(FileWatchTrigger))]
 public abstract record WorkflowTrigger
 {
     /// <summary>
@@ -180,6 +181,56 @@ public sealed record JobCompletionTrigger : WorkflowTrigger
     /// </summary>
     [Key(5)]
     public string? Filter { get; init; }
+}
+
+/// <summary>
+/// Trigger based on file system changes.
+/// </summary>
+[MessagePackObject]
+public sealed record FileWatchTrigger : WorkflowTrigger
+{
+    /// <summary>
+    /// Agent ID or pattern to run the file watcher on.
+    /// Use "*" for all agents or a specific agent ID.
+    /// </summary>
+    [Key(3)]
+    public required string AgentPattern { get; init; }
+
+    /// <summary>
+    /// Directory path to watch on the agent.
+    /// </summary>
+    [Key(4)]
+    public required string WatchPath { get; init; }
+
+    /// <summary>
+    /// File filter pattern (e.g., "*.txt", "*.*").
+    /// </summary>
+    [Key(5)]
+    public string Filter { get; init; } = "*.*";
+
+    /// <summary>
+    /// Whether to watch subdirectories.
+    /// </summary>
+    [Key(6)]
+    public bool IncludeSubdirectories { get; init; } = true;
+
+    /// <summary>
+    /// Types of changes to watch for.
+    /// </summary>
+    [Key(7)]
+    public IReadOnlyList<string> ChangeTypes { get; init; } = ["Created", "Modified", "Deleted", "Renamed"];
+
+    /// <summary>
+    /// Debounce delay in milliseconds to prevent multiple triggers.
+    /// </summary>
+    [Key(8)]
+    public int DebounceMs { get; init; } = 1000;
+
+    /// <summary>
+    /// Mapping of file event data to workflow input variables.
+    /// </summary>
+    [Key(9)]
+    public IReadOnlyDictionary<string, string>? InputMapping { get; init; }
 }
 
 /// <summary>

@@ -105,6 +105,142 @@ public sealed class FileDownloadHandler : IRequestResponseHandler<FileDownloadRe
 }
 
 /// <summary>
+/// Handler for file upload command.
+/// </summary>
+public sealed class FileUploadHandler : IRequestResponseHandler<FileUploadResult>
+{
+    private readonly HttpClient _httpClient;
+    private readonly ILogger<FileUploadHandler> _logger;
+
+    public string Command => Commands.File.Upload;
+
+    public FileUploadHandler(HttpClient httpClient, ILogger<FileUploadHandler> logger)
+    {
+        _httpClient = httpClient;
+        _logger = logger;
+    }
+
+    public async Task<FileUploadResult> HandleAsync(CommandContext context, CancellationToken cancellationToken = default)
+    {
+        var request = context.GetRequiredParameter<FileUploadRequest>();
+
+        _logger.LogInformation("Uploading file from {Source} to {Destination}",
+            request.SourcePath, request.DestinationUrl);
+
+        try
+        {
+            // Check if source file exists
+            if (!File.Exists(request.SourcePath))
+            {
+                return new FileUploadResult
+                {
+                    Success = false,
+                    Error = $"Source file not found: {request.SourcePath}"
+                };
+            }
+
+            var fileInfo = new FileInfo(request.SourcePath);
+
+            // Compute checksum if requested
+            string? checksum = null;
+            if (request.IncludeChecksum)
+            {
+                checksum = await ComputeChecksumAsync(request.SourcePath, cancellationToken);
+            }
+
+            // Create multipart form data
+            using var content = new MultipartFormDataContent();
+            await using var fileStream = File.OpenRead(request.SourcePath);
+            using var streamContent = new StreamContent(fileStream);
+
+            // Set content headers
+            streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+            content.Add(streamContent, "file", Path.GetFileName(request.SourcePath));
+
+            // Add metadata
+            // Note: StringContent instances are owned and disposed by MultipartFormDataContent
+#pragma warning disable CA2000 // Dispose objects before losing scope
+            content.Add(new StringContent(request.Overwrite.ToString()), "overwrite");
+            if (checksum != null)
+            {
+                content.Add(new StringContent(checksum), "checksum");
+            }
+            if (request.Metadata != null)
+            {
+                foreach (var (key, value) in request.Metadata)
+                {
+                    content.Add(new StringContent(value), $"metadata_{key}");
+                }
+            }
+#pragma warning restore CA2000
+
+            // Upload the file
+            using var response = await _httpClient.PostAsync(
+                new Uri(request.DestinationUrl),
+                content,
+                cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                return new FileUploadResult
+                {
+                    Success = false,
+                    Error = $"Upload failed: {response.StatusCode} - {errorContent}"
+                };
+            }
+
+            // Try to get server path from response
+            string? serverPath = null;
+            try
+            {
+                var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
+                var responseObj = System.Text.Json.JsonSerializer.Deserialize<UploadResponse>(responseJson);
+                serverPath = responseObj?.Path;
+            }
+            catch
+            {
+                // Ignore deserialization errors
+            }
+
+            return new FileUploadResult
+            {
+                Success = true,
+                ServerPath = serverPath,
+                Size = fileInfo.Length,
+                Checksum = checksum
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to upload file to {Destination}", request.DestinationUrl);
+            return new FileUploadResult
+            {
+                Success = false,
+                Error = ex.Message
+            };
+        }
+    }
+
+    private static async Task<string> ComputeChecksumAsync(string path, CancellationToken cancellationToken)
+    {
+        await using var stream = File.OpenRead(path);
+        var hash = await SHA256.HashDataAsync(stream, cancellationToken);
+        return Convert.ToHexString(hash);
+    }
+}
+
+/// <summary>
+/// Response from file upload endpoint.
+/// </summary>
+internal sealed class UploadResponse
+{
+    public string? Path { get; set; }
+    public string? Checksum { get; set; }
+    public long? Size { get; set; }
+}
+
+/// <summary>
 /// Handler for file delete command.
 /// </summary>
 public sealed class FileDeleteHandler : IRequestResponseHandler<FileDeleteResult>

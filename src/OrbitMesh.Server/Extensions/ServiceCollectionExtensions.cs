@@ -201,6 +201,32 @@ public sealed class OrbitMeshServerBuilder
     }
 
     /// <summary>
+    /// Adds file storage services with local filesystem backend.
+    /// </summary>
+    /// <param name="rootPath">Root path for file storage.</param>
+    /// <returns>The builder for chaining.</returns>
+    public OrbitMeshServerBuilder AddFileStorage(string rootPath)
+    {
+        _services.AddSingleton<IFileStorageService>(sp =>
+            new LocalFileStorageService(
+                rootPath,
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<LocalFileStorageService>>()));
+        return this;
+    }
+
+    /// <summary>
+    /// Adds file storage services with custom configuration.
+    /// </summary>
+    /// <param name="configure">Configuration action for file storage options.</param>
+    /// <returns>The builder for chaining.</returns>
+    public OrbitMeshServerBuilder AddFileStorage(Action<FileStorageOptions> configure)
+    {
+        var options = new FileStorageOptions();
+        configure(options);
+        return AddFileStorage(options.RootPath);
+    }
+
+    /// <summary>
     /// Adds workflow engine integration to the server.
     /// </summary>
     /// <returns>The builder for chaining.</returns>
@@ -267,6 +293,17 @@ public sealed class OrbitMeshHealthCheckOptions
     /// Gets or sets the threshold for pending jobs before the health check reports degraded status.
     /// </summary>
     public int PendingJobThreshold { get; set; } = 100;
+}
+
+/// <summary>
+/// Options for file storage configuration.
+/// </summary>
+public sealed class FileStorageOptions
+{
+    /// <summary>
+    /// Gets or sets the root path for file storage.
+    /// </summary>
+    public string RootPath { get; set; } = "./storage";
 }
 
 /// <summary>

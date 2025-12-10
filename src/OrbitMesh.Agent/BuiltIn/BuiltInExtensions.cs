@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using OrbitMesh.Agent.BuiltIn.FileWatcher;
 using OrbitMesh.Agent.BuiltIn.Handlers;
 using OrbitMesh.Core.Contracts;
 
@@ -27,7 +28,8 @@ public static class BuiltInExtensions
             .WithSystemHandlers(options)
             .WithFileHandlers(options)
             .WithServiceHandlers(options)
-            .WithUpdateHandlers(options);
+            .WithUpdateHandlers(options)
+            .WithFileWatchHandlers(options);
     }
 
     /// <summary>
@@ -67,7 +69,7 @@ public static class BuiltInExtensions
     }
 
     /// <summary>
-    /// Registers file handlers (download, delete, list, info, exists, sync).
+    /// Registers file handlers (download, upload, delete, list, info, exists, sync).
     /// </summary>
     public static MeshAgentBuilder WithFileHandlers(
         this MeshAgentBuilder builder,
@@ -82,6 +84,11 @@ public static class BuiltInExtensions
         builder.OnCommand(Commands.File.Download, new FileDownloadHandler(
             httpClient,
             loggerFactory.CreateLogger<FileDownloadHandler>()));
+
+        // Upload handler
+        builder.OnCommand(Commands.File.Upload, new FileUploadHandler(
+            httpClient,
+            loggerFactory.CreateLogger<FileUploadHandler>()));
 
         // Delete handler
         builder.OnCommand(Commands.File.Delete, new FileDeleteHandler(
@@ -180,6 +187,42 @@ public static class BuiltInExtensions
     }
 
     /// <summary>
+    /// Registers file watch handlers (start, stop, list).
+    /// </summary>
+    public static MeshAgentBuilder WithFileWatchHandlers(
+        this MeshAgentBuilder builder,
+        BuiltInHandlerOptions? options = null)
+    {
+        options ??= new BuiltInHandlerOptions();
+
+        var loggerFactory = options.LoggerFactory ?? NullLoggerFactory.Instance;
+
+        // Create or use existing FileWatcherService
+        var watcherService = options.FileWatcherService ??
+            new FileWatcherService(loggerFactory.CreateLogger<FileWatcherService>());
+
+        // Start handler
+        builder.OnCommand(Commands.FileWatch.Start, new StartFileWatchHandler(
+            watcherService,
+            loggerFactory.CreateLogger<StartFileWatchHandler>()));
+
+        // Stop handler
+        builder.OnCommand(Commands.FileWatch.Stop, new StopFileWatchHandler(
+            watcherService,
+            loggerFactory.CreateLogger<StopFileWatchHandler>()));
+
+        // List handler
+        builder.OnCommand(Commands.FileWatch.List, new ListFileWatchesHandler(
+            watcherService,
+            loggerFactory.CreateLogger<ListFileWatchesHandler>()));
+
+        // Store the watcher service in options for external access
+        options.FileWatcherService = watcherService;
+
+        return builder;
+    }
+
+    /// <summary>
     /// Adds a custom health check.
     /// </summary>
     public static MeshAgentBuilder WithHealthCheck(
@@ -239,4 +282,9 @@ public sealed class BuiltInHandlerOptions
     /// Application installation path for updates.
     /// </summary>
     public string? ApplicationPath { get; set; }
+
+    /// <summary>
+    /// File watcher service instance for monitoring file changes.
+    /// </summary>
+    public FileWatcherService? FileWatcherService { get; set; }
 }

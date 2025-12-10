@@ -104,6 +104,7 @@ publish/
 *.log
 
 # Local
+.serena/
 claudedocs/
 claude-docs/
 local-docs/

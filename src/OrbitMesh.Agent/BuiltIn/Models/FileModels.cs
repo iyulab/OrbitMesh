@@ -276,6 +276,82 @@ public sealed record FileInfoResult
 }
 
 /// <summary>
+/// Request to upload a file from agent to server.
+/// </summary>
+[MessagePackObject]
+public sealed record FileUploadRequest
+{
+    /// <summary>
+    /// Local file path on agent to upload.
+    /// </summary>
+    [Key(0)]
+    public required string SourcePath { get; init; }
+
+    /// <summary>
+    /// Server-side destination path or upload endpoint URL.
+    /// </summary>
+    [Key(1)]
+#pragma warning disable CA1056 // URI properties should not be strings (MessagePack requires string)
+    public required string DestinationUrl { get; init; }
+#pragma warning restore CA1056
+
+    /// <summary>
+    /// Whether to compute and send checksum for verification.
+    /// </summary>
+    [Key(2)]
+    public bool IncludeChecksum { get; init; } = true;
+
+    /// <summary>
+    /// Whether to overwrite existing file on server.
+    /// </summary>
+    [Key(3)]
+    public bool Overwrite { get; init; } = true;
+
+    /// <summary>
+    /// Optional metadata to include with upload.
+    /// </summary>
+    [Key(4)]
+    public IReadOnlyDictionary<string, string>? Metadata { get; init; }
+}
+
+/// <summary>
+/// Result of file upload operation.
+/// </summary>
+[MessagePackObject]
+public sealed record FileUploadResult
+{
+    /// <summary>
+    /// Whether the upload was successful.
+    /// </summary>
+    [Key(0)]
+    public bool Success { get; init; }
+
+    /// <summary>
+    /// Server-side path where file was stored.
+    /// </summary>
+    [Key(1)]
+    public string? ServerPath { get; init; }
+
+    /// <summary>
+    /// Size of the uploaded file in bytes.
+    /// </summary>
+    [Key(2)]
+    public long Size { get; init; }
+
+    /// <summary>
+    /// SHA256 checksum of the uploaded file.
+    /// </summary>
+    [Key(3)]
+    public string? Checksum { get; init; }
+
+    /// <summary>
+    /// Error message if failed.
+    /// </summary>
+    [Key(4)]
+    public string? Error { get; init; }
+}
+
+/// <summary>
 /// Request to sync files from server to agent.
 /// </summary>
 [MessagePackObject]

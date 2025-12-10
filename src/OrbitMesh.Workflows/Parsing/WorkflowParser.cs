@@ -241,6 +241,19 @@ public sealed class WorkflowParser
                 Statuses = yaml.Statuses?.AsReadOnly() ?? (IReadOnlyList<string>)["Completed", "Failed"],
                 Filter = yaml.Filter
             },
+            "file_watch" or "filewatch" => new FileWatchTrigger
+            {
+                Id = yaml.Id,
+                Name = yaml.Name,
+                IsEnabled = yaml.Enabled,
+                AgentPattern = yaml.AgentPattern ?? throw new WorkflowParseException($"Trigger '{yaml.Id}' of type 'file_watch' requires 'agent_pattern'"),
+                WatchPath = yaml.WatchPath ?? throw new WorkflowParseException($"Trigger '{yaml.Id}' of type 'file_watch' requires 'watch_path'"),
+                Filter = yaml.WatchFilter ?? "*.*",
+                IncludeSubdirectories = yaml.IncludeSubdirectories,
+                ChangeTypes = yaml.ChangeTypes?.AsReadOnly() ?? (IReadOnlyList<string>)["Created", "Modified", "Deleted", "Renamed"],
+                DebounceMs = yaml.DebounceMs,
+                InputMapping = yaml.InputMapping?.AsReadOnly()
+            },
             _ => throw new WorkflowParseException($"Unknown trigger type: {yaml.Type}")
         };
     }
