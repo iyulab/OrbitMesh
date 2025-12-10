@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Server,
@@ -8,37 +9,32 @@ import {
   Terminal,
   Container,
   RefreshCw,
+  ChevronRight,
 } from 'lucide-react'
 import { getAgents, createApiToken, generateAgentCommand, generateDockerCommand } from '@/api/client'
-import type { Agent } from '@/types'
+import { AgentStatusBadge } from '@/components/ui/status-badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { toast } from '@/components/ui/sonner'
 
-function AgentStatusBadge({ status }: { status: Agent['status'] }) {
-  const statusStyles: Record<string, string> = {
-    Ready: 'status-ready',
-    Running: 'status-busy',
-    Disconnected: 'status-disconnected',
-    Created: 'status-pending',
-    Initializing: 'status-pending',
-    Paused: 'bg-blue-500/20 text-blue-600 dark:text-blue-400',
-    Stopping: 'bg-orange-500/20 text-orange-600 dark:text-orange-400',
-    Stopped: 'bg-slate-500/20 text-slate-600 dark:text-slate-400',
-    Faulted: 'bg-red-500/20 text-red-600 dark:text-red-400',
-  }
-
-  return (
-    <span className={`status-badge ${statusStyles[status] || 'status-pending'}`}>
-      {status}
-    </span>
-  )
-}
-
-function AddAgentModal({
-  isOpen,
-  onClose,
+function AddAgentDialog({
+  open,
+  onOpenChange,
   serverUrl
 }: {
-  isOpen: boolean
-  onClose: () => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
   serverUrl: string
 }) {
   const [tokenName, setTokenName] = useState('')
@@ -46,7 +42,6 @@ function AddAgentModal({
   const [agentGroup, setAgentGroup] = useState('')
   const [generatedToken, setGeneratedToken] = useState<string | null>(null)
   const [copied, setCopied] = useState<'cli' | 'docker' | null>(null)
-  const [commandType, setCommandType] = useState<'cli' | 'docker'>('cli')
 
   const queryClient = useQueryClient()
 
@@ -55,6 +50,12 @@ function AddAgentModal({
     onSuccess: (data) => {
       setGeneratedToken(data.token || '')
       queryClient.invalidateQueries({ queryKey: ['tokens'] })
+      toast.success('Token generated successfully')
+    },
+    onError: (error) => {
+      toast.error('Failed to generate token', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
     },
   })
 
@@ -81,9 +82,14 @@ function AddAgentModal({
 
   const handleCopy = async (type: 'cli' | 'docker') => {
     const command = type === 'cli' ? cliCommand : dockerCommand
-    await navigator.clipboard.writeText(command)
-    setCopied(type)
-    setTimeout(() => setCopied(null), 2000)
+    try {
+      await navigator.clipboard.writeText(command)
+      setCopied(type)
+      toast.success('Copied to clipboard')
+      setTimeout(() => setCopied(null), 2000)
+    } catch {
+      toast.error('Failed to copy to clipboard')
+    }
   }
 
   const handleClose = () => {
@@ -92,32 +98,26 @@ function AddAgentModal({
     setAgentGroup('')
     setGeneratedToken(null)
     setCopied(null)
-    onClose()
+    onOpenChange(false)
   }
 
-  if (!isOpen) return null
-
   return (
-    <div className="modal-backdrop">
-      <div className="modal-content w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="p-6 border-b border-slate-200 dark:border-slate-700">
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Add New Agent</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+    <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Add New Agent</DialogTitle>
+          <DialogDescription>
             Generate a token and connection command for a new agent
-          </p>
-        </div>
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="p-6 space-y-6">
-          {/* Token Generation */}
+        <div className="space-y-6 py-4">
           {!generatedToken ? (
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Token Name
-                </label>
-                <input
-                  type="text"
-                  className="input w-full"
+              <div className="space-y-2">
+                <Label htmlFor="token-name">Token Name</Label>
+                <Input
+                  id="token-name"
                   placeholder="my-agent-token"
                   value={tokenName}
                   onChange={(e) => setTokenName(e.target.value)}
@@ -125,25 +125,19 @@ function AddAgentModal({
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Agent Name (optional)
-                  </label>
-                  <input
-                    type="text"
-                    className="input w-full"
+                <div className="space-y-2">
+                  <Label htmlFor="agent-name">Agent Name (optional)</Label>
+                  <Input
+                    id="agent-name"
                     placeholder="worker-01"
                     value={agentName}
                     onChange={(e) => setAgentName(e.target.value)}
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Agent Group (optional)
-                  </label>
-                  <input
-                    type="text"
-                    className="input w-full"
+                <div className="space-y-2">
+                  <Label htmlFor="agent-group">Agent Group (optional)</Label>
+                  <Input
+                    id="agent-group"
                     placeholder="production"
                     value={agentGroup}
                     onChange={(e) => setAgentGroup(e.target.value)}
@@ -151,67 +145,73 @@ function AddAgentModal({
                 </div>
               </div>
 
-              <button
+              <Button
                 onClick={handleGenerateToken}
                 disabled={createTokenMutation.isPending}
-                className="btn-primary w-full"
+                className="w-full"
               >
                 {createTokenMutation.isPending ? 'Generating...' : 'Generate Token'}
-              </button>
+              </Button>
             </div>
           ) : (
             <>
-              {/* Token Warning */}
-              <div className="bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-200 dark:border-yellow-500/20 rounded-lg p-4">
-                <p className="text-yellow-700 dark:text-yellow-400 text-sm">
-                  ⚠️ Copy this token now. It will not be shown again.
-                </p>
-              </div>
+              <Alert className="border-yellow-200 bg-yellow-50 dark:border-yellow-500/20 dark:bg-yellow-500/10">
+                <AlertDescription className="text-yellow-700 dark:text-yellow-400">
+                  Copy this token now. It will not be shown again.
+                </AlertDescription>
+              </Alert>
 
-              {/* Command Type Tabs */}
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setCommandType('cli')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                    commandType === 'cli'
-                      ? 'bg-orbit-600 text-white'
-                      : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600'
-                  }`}
-                >
-                  <Terminal className="w-4 h-4" />
-                  CLI Command
-                </button>
-                <button
-                  onClick={() => setCommandType('docker')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                    commandType === 'docker'
-                      ? 'bg-orbit-600 text-white'
-                      : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600'
-                  }`}
-                >
-                  <Container className="w-4 h-4" />
-                  Docker Command
-                </button>
-              </div>
+              <Tabs defaultValue="cli">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="cli" className="flex items-center gap-2">
+                    <Terminal className="w-4 h-4" />
+                    CLI Command
+                  </TabsTrigger>
+                  <TabsTrigger value="docker" className="flex items-center gap-2">
+                    <Container className="w-4 h-4" />
+                    Docker Command
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="cli" className="mt-4">
+                  <div className="relative">
+                    <pre className="bg-slate-100 dark:bg-slate-900 rounded-lg p-4 text-sm text-slate-700 dark:text-slate-300 overflow-x-auto">
+                      {cliCommand}
+                    </pre>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute top-2 right-2"
+                      onClick={() => handleCopy('cli')}
+                    >
+                      {copied === 'cli' ? (
+                        <Check className="w-4 h-4 text-green-600" />
+                      ) : (
+                        <Copy className="w-4 h-4" />
+                      )}
+                    </Button>
+                  </div>
+                </TabsContent>
+                <TabsContent value="docker" className="mt-4">
+                  <div className="relative">
+                    <pre className="bg-slate-100 dark:bg-slate-900 rounded-lg p-4 text-sm text-slate-700 dark:text-slate-300 overflow-x-auto">
+                      {dockerCommand}
+                    </pre>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute top-2 right-2"
+                      onClick={() => handleCopy('docker')}
+                    >
+                      {copied === 'docker' ? (
+                        <Check className="w-4 h-4 text-green-600" />
+                      ) : (
+                        <Copy className="w-4 h-4" />
+                      )}
+                    </Button>
+                  </div>
+                </TabsContent>
+              </Tabs>
 
-              {/* Command Display */}
-              <div className="relative">
-                <pre className="bg-slate-100 dark:bg-slate-900 rounded-lg p-4 text-sm text-slate-700 dark:text-slate-300 overflow-x-auto">
-                  {commandType === 'cli' ? cliCommand : dockerCommand}
-                </pre>
-                <button
-                  onClick={() => handleCopy(commandType)}
-                  className="absolute top-2 right-2 p-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 rounded-lg transition-colors"
-                >
-                  {copied === commandType ? (
-                    <Check className="w-4 h-4 text-green-600 dark:text-green-400" />
-                  ) : (
-                    <Copy className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-                  )}
-                </button>
-              </div>
-
-              {/* Instructions */}
               <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4">
                 <h3 className="text-sm font-medium text-slate-900 dark:text-white mb-2">Instructions</h3>
                 <ol className="text-sm text-slate-600 dark:text-slate-400 space-y-2 list-decimal list-inside">
@@ -224,18 +224,18 @@ function AddAgentModal({
           )}
         </div>
 
-        <div className="p-6 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-3">
-          <button onClick={handleClose} className="btn-secondary">
+        <DialogFooter>
+          <Button variant="outline" onClick={handleClose}>
             {generatedToken ? 'Done' : 'Cancel'}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
 export default function Agents() {
-  const [showAddModal, setShowAddModal] = useState(false)
+  const [showAddDialog, setShowAddDialog] = useState(false)
   const queryClient = useQueryClient()
 
   const { data: agents = [], isLoading } = useQuery({
@@ -262,20 +262,17 @@ export default function Agents() {
           <p className="text-slate-500 dark:text-slate-400 mt-1">Manage your distributed agents</p>
         </div>
         <div className="flex gap-3">
-          <button
+          <Button
+            variant="outline"
             onClick={() => queryClient.invalidateQueries({ queryKey: ['agents'] })}
-            className="btn-secondary flex items-center gap-2"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className="w-4 h-4 mr-2" />
             Refresh
-          </button>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="btn-primary flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
+          </Button>
+          <Button onClick={() => setShowAddDialog(true)}>
+            <Plus className="w-4 h-4 mr-2" />
             Add Agent
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -318,12 +315,9 @@ export default function Agents() {
             <p className="text-slate-500 dark:text-slate-400 mb-4">
               Add your first agent to start distributing work
             </p>
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="btn-primary"
-            >
+            <Button onClick={() => setShowAddDialog(true)}>
               Add Agent
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -335,11 +329,12 @@ export default function Agents() {
                   <th className="text-left py-3 px-4 text-sm font-medium text-slate-500 dark:text-slate-400">Group</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-slate-500 dark:text-slate-400">Capabilities</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-slate-500 dark:text-slate-400">Last Heartbeat</th>
+                  <th className="text-right py-3 px-4 text-sm font-medium text-slate-500 dark:text-slate-400"></th>
                 </tr>
               </thead>
               <tbody>
                 {agents.map((agent) => (
-                  <tr key={agent.id} className="table-row">
+                  <tr key={agent.id} className="table-row hover:bg-slate-50 dark:hover:bg-slate-800/50">
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-3">
                         <Server className="w-5 h-5 text-slate-400" />
@@ -379,6 +374,13 @@ export default function Agents() {
                           : '-'}
                       </span>
                     </td>
+                    <td className="py-3 px-4 text-right">
+                      <Link to={`/agents/${agent.id}`}>
+                        <Button variant="ghost" size="sm">
+                          <ChevronRight className="w-4 h-4" />
+                        </Button>
+                      </Link>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -387,10 +389,10 @@ export default function Agents() {
         )}
       </div>
 
-      {/* Add Agent Modal */}
-      <AddAgentModal
-        isOpen={showAddModal}
-        onClose={() => setShowAddModal(false)}
+      {/* Add Agent Dialog */}
+      <AddAgentDialog
+        open={showAddDialog}
+        onOpenChange={setShowAddDialog}
         serverUrl={serverUrl}
       />
     </div>

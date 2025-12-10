@@ -100,6 +100,46 @@ export async function createWorkflow(workflow: {
   })
 }
 
+export async function updateWorkflow(id: string, workflow: {
+  name: string
+  description?: string
+  version?: string
+  isActive?: boolean
+  steps: Array<{
+    id: string
+    type: string
+    name?: string
+    config: Record<string, unknown>
+  }>
+}): Promise<Workflow> {
+  return fetchApi(`/workflows/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(workflow),
+  })
+}
+
+export async function duplicateWorkflow(id: string, newName?: string): Promise<Workflow> {
+  // Get the original workflow
+  const original = await getWorkflow(id)
+
+  // Create a copy with a new name
+  return createWorkflow({
+    name: newName || `${original.name} (Copy)`,
+    description: original.description,
+    version: '1.0.0',
+    steps: original.steps.map((step) => ({
+      id: `${step.id}_copy_${Date.now()}`,
+      type: step.type,
+      name: step.name,
+      config: step.config,
+    })),
+  })
+}
+
+export async function deleteWorkflow(id: string): Promise<void> {
+  await fetchApi(`/workflows/${id}`, { method: 'DELETE' })
+}
+
 // API Tokens (for agent registration)
 export async function getApiTokens(): Promise<ApiToken[]> {
   return fetchApi('/tokens')

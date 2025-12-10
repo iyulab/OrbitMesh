@@ -3,15 +3,15 @@ import { Home, AlertCircle } from 'lucide-react'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Agents from './pages/Agents'
+import AgentDetail from './pages/AgentDetail'
 import Jobs from './pages/Jobs'
+import JobDetail from './pages/JobDetail'
 import Workflows from './pages/Workflows'
+import WorkflowCreate from './pages/WorkflowCreate'
+import WorkflowEdit from './pages/WorkflowEdit'
 import Settings from './pages/Settings'
-import { useSignalR } from './hooks/useSignalR'
-
-function SignalRProvider({ children }: { children: React.ReactNode }) {
-  useSignalR()
-  return <>{children}</>
-}
+import { SignalRProvider } from './contexts/SignalRContext'
+import { CommandPalette, useCommandPalette } from './components/CommandPalette'
 
 function NotFound() {
   return (
@@ -32,21 +32,38 @@ function NotFound() {
   )
 }
 
-function App() {
+function AppContent() {
+  const { open, setOpen } = useCommandPalette()
+
   return (
-    <SignalRProvider>
+    <>
+      <CommandPalette open={open} onOpenChange={setOpen} />
       <Routes>
+        {/* Full-screen workflow editor (outside Layout) */}
+        <Route path="/workflows/new" element={<WorkflowCreate />} />
+        <Route path="/workflows/:workflowId/edit" element={<WorkflowEdit />} />
+
+        {/* Main layout routes */}
         <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="agents" element={<Agents />} />
+          <Route path="agents/:agentId" element={<AgentDetail />} />
           <Route path="jobs" element={<Jobs />} />
-          <Route path="jobs/:jobId" element={<Jobs />} />
+          <Route path="jobs/:jobId" element={<JobDetail />} />
           <Route path="workflows" element={<Workflows />} />
           <Route path="workflows/:workflowId" element={<Workflows />} />
           <Route path="settings" element={<Settings />} />
         </Route>
         <Route path="*" element={<NotFound />} />
       </Routes>
+    </>
+  )
+}
+
+function App() {
+  return (
+    <SignalRProvider>
+      <AppContent />
     </SignalRProvider>
   )
 }

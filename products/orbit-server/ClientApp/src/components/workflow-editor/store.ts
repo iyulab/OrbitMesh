@@ -324,11 +324,41 @@ export const useWorkflowEditorStore = create<WorkflowEditorState>()(
         })
       }
 
+      // Check workflow name
+      if (!state.workflowName || state.workflowName.trim().length === 0) {
+        errors.push({
+          message: 'Workflow name is required',
+          severity: 'error',
+        })
+      } else if (state.workflowName.length > 100) {
+        errors.push({
+          message: 'Workflow name must be 100 characters or less',
+          severity: 'error',
+        })
+      }
+
       // Check for trigger node
-      const hasTrigger = state.nodes.some((n) => n.data.category === 'trigger')
-      if (!hasTrigger && state.nodes.length > 0) {
+      const triggerNodes = state.nodes.filter((n) => n.data.category === 'trigger')
+      if (triggerNodes.length === 0 && state.nodes.length > 0) {
         errors.push({
           message: 'Workflow should have a trigger node',
+          severity: 'warning',
+        })
+      }
+
+      // Check for multiple trigger nodes (usually not desired)
+      if (triggerNodes.length > 1) {
+        errors.push({
+          message: 'Workflow has multiple trigger nodes - this may cause unexpected behavior',
+          severity: 'warning',
+        })
+      }
+
+      // Check for action nodes
+      const actionNodes = state.nodes.filter((n) => n.data.category === 'action')
+      if (actionNodes.length === 0 && state.nodes.length > 0) {
+        errors.push({
+          message: 'Workflow should have at least one action node',
           severity: 'warning',
         })
       }
@@ -338,14 +368,87 @@ export const useWorkflowEditorStore = create<WorkflowEditorState>()(
         const definition = NODE_DEFINITIONS[node.data.nodeType]
         if (definition) {
           definition.configSchema.forEach((field) => {
-            if (field.required && !node.data.config[field.key]) {
+            const value = node.data.config[field.key]
+
+            // Required field check
+            if (field.required && (value === undefined || value === null || value === '')) {
               errors.push({
                 nodeId: node.id,
                 field: field.key,
-                message: `${field.label} is required`,
+                message: `${node.data.label}: ${field.label} is required`,
                 severity: 'error',
               })
             }
+
+            // Type-specific validation
+            if (value !== undefined && value !== null && value !== '') {
+              // Number validation
+              if (field.type === 'number') {
+                const numValue = Number(value)
+                if (isNaN(numValue)) {
+                  errors.push({
+                    nodeId: node.id,
+                    field: field.key,
+                    message: `${node.data.label}: ${field.label} must be a valid number`,
+                    severity: 'error',
+                  })
+                }
+              }
+
+              // URL validation for webhook URLs
+              if (field.key === 'url' || field.key === 'webhookUrl' || field.key === 'endpoint') {
+                try {
+                  new URL(String(value))
+                } catch {
+                  // Allow template variables like {{variable}}
+                  if (!String(value).includes('{{')) {
+                    errors.push({
+                      nodeId: node.id,
+                      field: field.key,
+                      message: `${node.data.label}: ${field.label} must be a valid URL`,
+                      severity: 'error',
+                    })
+                  }
+                }
+              }
+
+              // Cron expression basic validation
+              if (field.key === 'schedule' || field.key === 'cron') {
+                const cronParts = String(value).trim().split(/\s+/)
+                if (cronParts.length < 5 || cronParts.length > 6) {
+                  errors.push({
+                    nodeId: node.id,
+                    field: field.key,
+                    message: `${node.data.label}: Invalid cron expression format`,
+                    severity: 'error',
+                  })
+                }
+              }
+            }
+          })
+        }
+
+        // Check node label
+        if (!node.data.label || node.data.label.trim().length === 0) {
+          errors.push({
+            nodeId: node.id,
+            message: 'Node must have a name',
+            severity: 'error',
+          })
+        }
+      })
+
+      // Check for duplicate node labels
+      const labelCounts = new Map<string, number>()
+      state.nodes.forEach((node) => {
+        const label = node.data.label?.toLowerCase() || ''
+        labelCounts.set(label, (labelCounts.get(label) || 0) + 1)
+      })
+      labelCounts.forEach((count, label) => {
+        if (count > 1 && label) {
+          errors.push({
+            message: `Duplicate node name: "${label}" appears ${count} times`,
+            severity: 'warning',
           })
         }
       })
@@ -360,6 +463,73 @@ export const useWorkflowEditorStore = create<WorkflowEditorState>()(
             nodeId: node.id,
             message: `Node "${node.data.label}" is not connected`,
             severity: 'warning',
+          })
+        }
+      })
+
+      // Check for circular references (simple cycle detection)
+      const detectCycle = (): boolean => {
+        const visited = new Set<string>()
+        const recursionStack = new Set<string>()
+
+        const dfs = (nodeId: string): boolean => {
+          visited.add(nodeId)
+          recursionStack.add(nodeId)
+
+          const outgoingEdges = state.edges.filter((e) => e.source === nodeId)
+          for (const edge of outgoingEdges) {
+            if (!visited.has(edge.target)) {
+              if (dfs(edge.target)) return true
+            } else if (recursionStack.has(edge.target)) {
+              return true
+            }
+          }
+
+          recursionStack.delete(nodeId)
+          return false
+        }
+
+        for (const node of state.nodes) {
+          if (!visited.has(node.id)) {
+            if (dfs(node.id)) return true
+          }
+        }
+        return false
+      }
+
+      if (state.nodes.length > 0 && detectCycle()) {
+        errors.push({
+          message: 'Workflow contains a circular reference',
+          severity: 'error',
+        })
+      }
+
+      // Check for dead-end action nodes (nodes with no outgoing connections that aren't terminal)
+      state.nodes.forEach((node) => {
+        if (node.data.category === 'action') {
+          const hasOutgoing = state.edges.some((e) => e.source === node.id)
+          const hasIncoming = state.edges.some((e) => e.target === node.id)
+
+          // If node has incoming but no outgoing and it's not explicitly a terminal node
+          if (hasIncoming && !hasOutgoing && state.nodes.length > 2) {
+            // This is fine - could be a terminal action
+          }
+        }
+      })
+
+      // Check for orphaned edges (edges pointing to non-existent nodes)
+      const nodeIds = new Set(state.nodes.map((n) => n.id))
+      state.edges.forEach((edge) => {
+        if (!nodeIds.has(edge.source)) {
+          errors.push({
+            message: `Edge references non-existent source node`,
+            severity: 'error',
+          })
+        }
+        if (!nodeIds.has(edge.target)) {
+          errors.push({
+            message: `Edge references non-existent target node`,
+            severity: 'error',
           })
         }
       })

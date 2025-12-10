@@ -1,22 +1,29 @@
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   GitBranch,
   RefreshCw,
   Play,
-  Clock,
-  CheckCircle,
-  XCircle,
   Plus,
   Pencil,
   List,
   LayoutGrid,
   ChevronDown,
   ChevronUp,
+  Copy,
+  Trash2,
+  MoreVertical,
 } from 'lucide-react'
-import { getWorkflows, getWorkflowInstances, startWorkflow, createWorkflow } from '@/api/client'
-import type { Workflow, WorkflowInstanceStatus } from '@/types'
-import { WorkflowEditor, useWorkflowEditorStore } from '@/components/workflow-editor'
+import { getWorkflows, getWorkflowInstances, startWorkflow, duplicateWorkflow, deleteWorkflow } from '@/api/client'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import type { Workflow } from '@/types'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -29,25 +36,8 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-
-function WorkflowStatusBadge({ status }: { status: WorkflowInstanceStatus }) {
-  const config: Record<WorkflowInstanceStatus, { class: string; icon: React.ComponentType<{ className?: string }> }> = {
-    Running: { class: 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400', icon: Clock },
-    Completed: { class: 'bg-green-500/20 text-green-600 dark:text-green-400', icon: CheckCircle },
-    Failed: { class: 'bg-red-500/20 text-red-600 dark:text-red-400', icon: XCircle },
-    Paused: { class: 'bg-blue-500/20 text-blue-600 dark:text-blue-400', icon: Clock },
-    Cancelled: { class: 'bg-slate-500/20 text-slate-600 dark:text-slate-400', icon: XCircle },
-  }
-
-  const { class: className, icon: Icon } = config[status] || config.Running
-
-  return (
-    <span className={`status-badge flex items-center gap-1 ${className}`}>
-      <Icon className="w-3 h-3" />
-      {status}
-    </span>
-  )
-}
+import { WorkflowStatusBadge } from '@/components/ui/status-badge'
+import { toast } from '@/components/ui/sonner'
 
 function StartWorkflowModal({
   isOpen,
@@ -66,7 +56,13 @@ function StartWorkflowModal({
       startWorkflow(data.workflowId, data.input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['workflow-instances'] })
+      toast.success('Workflow started successfully')
       handleClose()
+    },
+    onError: (error) => {
+      toast.error('Failed to start workflow', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
     },
   })
 
@@ -79,7 +75,9 @@ function StartWorkflowModal({
         input = parsed
       }
     } catch {
-      alert('Invalid JSON input')
+      toast.error('Invalid JSON input', {
+        description: 'Please enter valid JSON format',
+      })
       return
     }
     startMutation.mutate({ workflowId: workflow.id, input })
@@ -130,76 +128,9 @@ function StartWorkflowModal({
   )
 }
 
-// Visual Workflow Editor Dialog
-function WorkflowEditorDialog({
-  isOpen,
-  onClose,
-}: {
-  isOpen: boolean
-  onClose: () => void
-  workflow?: Workflow | null
-}) {
-  const queryClient = useQueryClient()
-  const clearWorkflow = useWorkflowEditorStore((state) => state.clearWorkflow)
-
-  const createMutation = useMutation({
-    mutationFn: createWorkflow,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['workflows'] })
-      handleClose()
-    },
-  })
-
-  const handleSave = useCallback(
-    (workflowData: { nodes: unknown[]; edges: unknown[]; name: string; description: string }) => {
-      // Convert visual workflow to API format
-      const steps = (workflowData.nodes as Array<{
-        id: string
-        data: {
-          label: string
-          nodeType: string
-          config: Record<string, unknown>
-        }
-      }>)
-        .filter((node) => node.data.nodeType !== 'trigger-manual' &&
-                         node.data.nodeType !== 'trigger-schedule' &&
-                         node.data.nodeType !== 'trigger-webhook')
-        .map((node) => ({
-          id: node.id,
-          type: node.data.nodeType.replace('action-', '').replace('logic-', '').replace('transform-', ''),
-          name: node.data.label,
-          config: node.data.config,
-        }))
-
-      createMutation.mutate({
-        name: workflowData.name,
-        description: workflowData.description || undefined,
-        version: '1.0.0',
-        steps,
-      })
-    },
-    [createMutation]
-  )
-
-  const handleClose = () => {
-    clearWorkflow()
-    onClose()
-  }
-
-  // Load existing workflow data if editing
-  // useEffect would go here if we support editing existing workflows
-
-  return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
-      <DialogContent className="max-w-[95vw] h-[90vh] p-0">
-        <WorkflowEditor onSave={handleSave} className="h-full" />
-      </DialogContent>
-    </Dialog>
-  )
-}
 
 export default function Workflows() {
-  const [showEditorDialog, setShowEditorDialog] = useState(false)
+  const navigate = useNavigate()
   const [showStartModal, setShowStartModal] = useState(false)
   const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null)
   const [expandedWorkflow, setExpandedWorkflow] = useState<string | null>(null)
@@ -216,6 +147,34 @@ export default function Workflows() {
     queryFn: () => getWorkflowInstances(),
   })
 
+  const duplicateMutation = useMutation({
+    mutationFn: (workflowId: string) => duplicateWorkflow(workflowId),
+    onSuccess: (newWorkflow) => {
+      queryClient.invalidateQueries({ queryKey: ['workflows'] })
+      toast.success('Workflow duplicated successfully', {
+        description: `Created "${newWorkflow.name}"`,
+      })
+    },
+    onError: (error) => {
+      toast.error('Failed to duplicate workflow', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (workflowId: string) => deleteWorkflow(workflowId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workflows'] })
+      toast.success('Workflow deleted successfully')
+    },
+    onError: (error) => {
+      toast.error('Failed to delete workflow', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    },
+  })
+
   const isLoading = loadingWorkflows || loadingInstances
 
   const handleStartWorkflow = (workflow: Workflow) => {
@@ -224,10 +183,21 @@ export default function Workflows() {
   }
 
   const handleEditWorkflow = (workflow: Workflow) => {
-    // For now, we can only create new workflows visually
-    // Editing will load the workflow into the editor
-    setSelectedWorkflow(workflow)
-    setShowEditorDialog(true)
+    navigate(`/workflows/${workflow.id}/edit`)
+  }
+
+  const handleCreateWorkflow = () => {
+    navigate('/workflows/new')
+  }
+
+  const handleDuplicateWorkflow = (workflow: Workflow) => {
+    duplicateMutation.mutate(workflow.id)
+  }
+
+  const handleDeleteWorkflow = (workflow: Workflow) => {
+    if (confirm(`Are you sure you want to delete "${workflow.name}"? This action cannot be undone.`)) {
+      deleteMutation.mutate(workflow.id)
+    }
   }
 
   return (
@@ -269,7 +239,7 @@ export default function Workflows() {
             <RefreshCw className="w-4 h-4 mr-2" />
             Refresh
           </Button>
-          <Button onClick={() => setShowEditorDialog(true)}>
+          <Button onClick={handleCreateWorkflow}>
             <Plus className="w-4 h-4 mr-2" />
             Create Workflow
           </Button>
@@ -300,7 +270,7 @@ export default function Workflows() {
                 <p className="text-slate-500 dark:text-slate-400 mb-4">
                   Create your first workflow using the visual workflow builder
                 </p>
-                <Button onClick={() => setShowEditorDialog(true)}>
+                <Button onClick={handleCreateWorkflow}>
                   <Plus className="w-4 h-4 mr-2" />
                   Create Workflow
                 </Button>
@@ -368,6 +338,27 @@ export default function Workflows() {
                           <Play className="w-4 h-4 mr-1" />
                           Run
                         </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm">
+                              <MoreVertical className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => handleDuplicateWorkflow(workflow)}>
+                              <Copy className="w-4 h-4 mr-2" />
+                              Duplicate
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => handleDeleteWorkflow(workflow)}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </div>
 
@@ -409,20 +400,43 @@ export default function Workflows() {
                     key={workflow.id}
                     className="p-4 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-orbit-500 transition-colors"
                   >
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className="p-2 bg-orbit-100 dark:bg-orbit-600/20 rounded-lg">
-                        <GitBranch className="w-5 h-5 text-orbit-600 dark:text-orbit-400" />
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-orbit-100 dark:bg-orbit-600/20 rounded-lg">
+                          <GitBranch className="w-5 h-5 text-orbit-600 dark:text-orbit-400" />
+                        </div>
+                        <div>
+                          <h3 className="text-slate-900 dark:text-white font-medium">
+                            {workflow.name}
+                          </h3>
+                          <span
+                            className={`text-xs ${workflow.isActive ? 'text-green-600 dark:text-green-400' : 'text-slate-500 dark:text-slate-500'}`}
+                          >
+                            {workflow.isActive ? 'Active' : 'Inactive'}
+                          </span>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="text-slate-900 dark:text-white font-medium">
-                          {workflow.name}
-                        </h3>
-                        <span
-                          className={`text-xs ${workflow.isActive ? 'text-green-600 dark:text-green-400' : 'text-slate-500 dark:text-slate-500'}`}
-                        >
-                          {workflow.isActive ? 'Active' : 'Inactive'}
-                        </span>
-                      </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" className="-mr-2">
+                            <MoreVertical className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleDuplicateWorkflow(workflow)}>
+                            <Copy className="w-4 h-4 mr-2" />
+                            Duplicate
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => handleDeleteWorkflow(workflow)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="w-4 h-4 mr-2" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                     <p className="text-sm text-slate-500 dark:text-slate-400 mb-3 line-clamp-2">
                       {workflow.description || 'No description'}
@@ -521,15 +535,6 @@ export default function Workflows() {
       </Tabs>
 
       {/* Modals */}
-      <WorkflowEditorDialog
-        isOpen={showEditorDialog}
-        onClose={() => {
-          setShowEditorDialog(false)
-          setSelectedWorkflow(null)
-        }}
-        workflow={selectedWorkflow}
-      />
-
       <StartWorkflowModal
         isOpen={showStartModal}
         onClose={() => {

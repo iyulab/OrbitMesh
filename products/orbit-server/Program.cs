@@ -54,8 +54,13 @@ try
         ?? "Data Source=orbitmesh.db";
     builder.Services.AddOrbitMeshSqliteStorage(connectionString);
 
-    // Add API controllers
-    builder.Services.AddControllers();
+    // Add API controllers with JSON enum string serialization
+    builder.Services.AddControllers()
+        .AddJsonOptions(options =>
+        {
+            options.JsonSerializerOptions.Converters.Add(
+                new System.Text.Json.Serialization.JsonStringEnumConverter());
+        });
 
     // Add Swagger for development
     if (builder.Environment.IsDevelopment())

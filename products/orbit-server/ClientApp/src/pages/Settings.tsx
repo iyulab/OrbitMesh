@@ -12,10 +12,23 @@ import {
 } from 'lucide-react'
 import { getApiTokens, createApiToken, revokeApiToken } from '@/api/client'
 import type { ApiToken } from '@/types'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { toast } from '@/components/ui/sonner'
 
 function TokenRow({ token, onRevoke }: { token: ApiToken; onRevoke: () => void }) {
   return (
-    <tr className="table-row">
+    <tr className="table-row hover:bg-slate-50 dark:hover:bg-slate-800/50">
       <td className="py-3 px-4">
         <div className="flex items-center gap-2">
           <Key className="w-4 h-4 text-slate-400" />
@@ -54,24 +67,25 @@ function TokenRow({ token, onRevoke }: { token: ApiToken; onRevoke: () => void }
         </span>
       </td>
       <td className="py-3 px-4 text-right">
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={onRevoke}
-          className="text-red-600 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300 p-1"
-          title="Revoke token"
+          className="text-red-600 hover:text-red-500 dark:text-red-400"
         >
           <Trash2 className="w-4 h-4" />
-        </button>
+        </Button>
       </td>
     </tr>
   )
 }
 
-function CreateTokenModal({
-  isOpen,
-  onClose,
+function CreateTokenDialog({
+  open,
+  onOpenChange,
 }: {
-  isOpen: boolean
-  onClose: () => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
 }) {
   const [name, setName] = useState('')
   const [scopes, setScopes] = useState<string[]>(['agent:connect'])
@@ -87,7 +101,13 @@ function CreateTokenModal({
       queryClient.invalidateQueries({ queryKey: ['tokens'] })
       if (data.token) {
         setNewToken(data.token)
+        toast.success('Token created successfully')
       }
+    },
+    onError: (error) => {
+      toast.error('Failed to create token', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
     },
   })
 
@@ -116,9 +136,14 @@ function CreateTokenModal({
 
   const handleCopy = async () => {
     if (newToken) {
-      await navigator.clipboard.writeText(newToken)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      try {
+        await navigator.clipboard.writeText(newToken)
+        setCopied(true)
+        toast.success('Copied to clipboard')
+        setTimeout(() => setCopied(false), 2000)
+      } catch {
+        toast.error('Failed to copy to clipboard')
+      }
     }
   }
 
@@ -128,72 +153,66 @@ function CreateTokenModal({
     setExpiresInDays('')
     setNewToken(null)
     setCopied(false)
-    onClose()
+    onOpenChange(false)
   }
 
-  if (!isOpen) return null
-
   return (
-    <div className="modal-backdrop">
-      <div className="modal-content w-full max-w-md">
-        <div className="p-6 border-b border-slate-200 dark:border-slate-700">
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Create API Token</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+    <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Create API Token</DialogTitle>
+          <DialogDescription>
             Create a new token for API or agent access
-          </p>
-        </div>
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="p-6 space-y-4">
+        <div className="space-y-4 py-4">
           {newToken ? (
             <>
-              <div className="bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-200 dark:border-yellow-500/20 rounded-lg p-4">
-                <p className="text-yellow-700 dark:text-yellow-400 text-sm">
-                  ⚠️ Copy this token now. It will not be shown again.
-                </p>
-              </div>
+              <Alert className="border-yellow-200 bg-yellow-50 dark:border-yellow-500/20 dark:bg-yellow-500/10">
+                <AlertDescription className="text-yellow-700 dark:text-yellow-400">
+                  Copy this token now. It will not be shown again.
+                </AlertDescription>
+              </Alert>
               <div className="relative">
-                <input
-                  type="text"
+                <Input
                   readOnly
                   value={newToken}
-                  className="input w-full pr-12 font-mono text-sm"
+                  className="pr-12 font-mono text-sm"
                 />
-                <button
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 -translate-y-1/2"
                   onClick={handleCopy}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1"
                 >
                   {copied ? (
-                    <Check className="w-5 h-5 text-green-600 dark:text-green-400" />
+                    <Check className="w-4 h-4 text-green-600" />
                   ) : (
-                    <Copy className="w-5 h-5 text-slate-400" />
+                    <Copy className="w-4 h-4" />
                   )}
-                </button>
+                </Button>
               </div>
             </>
           ) : (
             <>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Token Name *
-                </label>
-                <input
-                  type="text"
-                  className="input w-full"
+              <div className="space-y-2">
+                <Label htmlFor="token-name">Token Name *</Label>
+                <Input
+                  id="token-name"
                   placeholder="my-token"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Scopes
-                </label>
+              <div className="space-y-2">
+                <Label>Scopes</Label>
                 <div className="space-y-2">
                   {availableScopes.map((scope) => (
                     <label
                       key={scope.id}
-                      className="flex items-start gap-3 p-3 bg-slate-50 dark:bg-slate-900 rounded-lg cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
+                      className="flex items-start gap-3 p-3 bg-slate-50 dark:bg-slate-900 rounded-lg cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
                     >
                       <input
                         type="checkbox"
@@ -210,13 +229,12 @@ function CreateTokenModal({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Expires In (days, optional)
-                </label>
-                <input
+              <div className="space-y-2">
+                <Label htmlFor="expires">Expires In (days, optional)</Label>
+                <Input
+                  id="expires"
                   type="number"
-                  className="input w-32"
+                  className="w-32"
                   placeholder="Never"
                   value={expiresInDays}
                   onChange={(e) => setExpiresInDays(e.target.value)}
@@ -226,27 +244,26 @@ function CreateTokenModal({
           )}
         </div>
 
-        <div className="p-6 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-3">
-          <button onClick={handleClose} className="btn-secondary">
+        <DialogFooter>
+          <Button variant="outline" onClick={handleClose}>
             {newToken ? 'Done' : 'Cancel'}
-          </button>
+          </Button>
           {!newToken && (
-            <button
+            <Button
               onClick={handleCreate}
               disabled={!name.trim() || scopes.length === 0 || createMutation.isPending}
-              className="btn-primary"
             >
               {createMutation.isPending ? 'Creating...' : 'Create Token'}
-            </button>
+            </Button>
           )}
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
 export default function Settings() {
-  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
   const queryClient = useQueryClient()
 
   const { data: tokens = [], isLoading } = useQuery({
@@ -258,6 +275,12 @@ export default function Settings() {
     mutationFn: revokeApiToken,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tokens'] })
+      toast.success('Token revoked')
+    },
+    onError: (error) => {
+      toast.error('Failed to revoke token', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
     },
   })
 
@@ -297,19 +320,17 @@ export default function Settings() {
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white">API Tokens</h2>
           </div>
           <div className="flex gap-2">
-            <button
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => queryClient.invalidateQueries({ queryKey: ['tokens'] })}
-              className="btn-secondary text-sm flex items-center gap-1"
             >
               <RefreshCw className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="btn-primary text-sm flex items-center gap-1"
-            >
-              <Plus className="w-4 h-4" />
+            </Button>
+            <Button size="sm" onClick={() => setShowCreateDialog(true)}>
+              <Plus className="w-4 h-4 mr-2" />
               Create Token
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -325,12 +346,9 @@ export default function Settings() {
             <p className="text-slate-500 dark:text-slate-400 mb-4">
               Create tokens to allow agents or applications to connect
             </p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="btn-primary"
-            >
+            <Button onClick={() => setShowCreateDialog(true)}>
               Create Token
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -359,10 +377,10 @@ export default function Settings() {
         )}
       </div>
 
-      {/* Create Token Modal */}
-      <CreateTokenModal
-        isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
+      {/* Create Token Dialog */}
+      <CreateTokenDialog
+        open={showCreateDialog}
+        onOpenChange={setShowCreateDialog}
       />
     </div>
   )

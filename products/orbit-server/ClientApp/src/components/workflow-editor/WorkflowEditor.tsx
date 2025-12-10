@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ReactFlowProvider } from '@xyflow/react'
+import { stringify as yamlStringify } from 'yaml'
 import { useWorkflowEditorStore } from './store'
 import { WorkflowCanvas } from './WorkflowCanvas'
 import { NodePalette } from './NodePalette'
 import { NodeConfigPanel } from './NodeConfigPanel'
+import { WorkflowTemplatesDialog } from './WorkflowTemplates'
 import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -15,9 +23,14 @@ import {
   PanelRightClose,
   PanelRightOpen,
   FileJson,
+  FileCode,
   Upload,
   AlertCircle,
+  LayoutTemplate,
+  Download,
+  ChevronDown,
 } from 'lucide-react'
+import type { WorkflowTemplate } from './types'
 import {
   Dialog,
   DialogContent,
@@ -41,6 +54,7 @@ export function WorkflowEditor({ className, onSave }: WorkflowEditorProps) {
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [importJson, setImportJson] = useState('')
   const [importError, setImportError] = useState<string | null>(null)
+  const [templatesDialogOpen, setTemplatesDialogOpen] = useState(false)
 
   // Store state
   const workflowName = useWorkflowEditorStore((state) => state.workflowName)
@@ -84,6 +98,45 @@ export function WorkflowEditor({ className, onSave }: WorkflowEditorProps) {
     URL.revokeObjectURL(url)
   }, [exportWorkflow])
 
+  // Handle export to YAML
+  const handleExportYaml = useCallback(() => {
+    const workflow = exportWorkflow()
+
+    // Convert to YAML-friendly format
+    const yamlData = {
+      name: workflow.name,
+      description: workflow.description,
+      version: '1.0.0',
+      steps: workflow.nodes.map((node) => ({
+        id: node.id,
+        type: node.data.nodeType,
+        name: node.data.label,
+        description: node.data.description,
+        config: node.data.config,
+        position: node.position,
+      })),
+      connections: workflow.edges.map((edge) => ({
+        id: edge.id,
+        from: edge.source,
+        to: edge.target,
+        fromHandle: edge.sourceHandle,
+        toHandle: edge.targetHandle,
+        label: edge.data?.label,
+      })),
+    }
+
+    const yaml = yamlStringify(yamlData, { indent: 2 })
+    const blob = new Blob([yaml], { type: 'text/yaml' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${workflow.name.toLowerCase().replace(/\s+/g, '-')}.yaml`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }, [exportWorkflow])
+
   // Handle import from JSON
   const handleImport = useCallback(() => {
     try {
@@ -101,6 +154,11 @@ export function WorkflowEditor({ className, onSave }: WorkflowEditorProps) {
       setImportError(error instanceof Error ? error.message : 'Invalid JSON format')
     }
   }, [importJson, loadWorkflow])
+
+  // Handle template selection
+  const handleSelectTemplate = useCallback((template: WorkflowTemplate) => {
+    loadWorkflow(template.nodes, template.edges, template.name, template.description)
+  }, [loadWorkflow])
 
   // Count errors and warnings
   const errorCount = editor.validationErrors.filter((e) => e.severity === 'error').length
@@ -161,6 +219,16 @@ export function WorkflowEditor({ className, onSave }: WorkflowEditorProps) {
               )}
             </div>
 
+            {/* Templates */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setTemplatesDialogOpen(true)}
+            >
+              <LayoutTemplate className="w-4 h-4 mr-1" />
+              Templates
+            </Button>
+
             {/* Import/Export */}
             <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
               <DialogTrigger asChild>
@@ -201,10 +269,25 @@ export function WorkflowEditor({ className, onSave }: WorkflowEditorProps) {
               </DialogContent>
             </Dialog>
 
-            <Button variant="outline" size="sm" onClick={handleExportJson}>
-              <FileJson className="w-4 h-4 mr-1" />
-              Export
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <Download className="w-4 h-4 mr-1" />
+                  Export
+                  <ChevronDown className="w-3 h-3 ml-1" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleExportJson}>
+                  <FileJson className="w-4 h-4 mr-2" />
+                  Export as JSON
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportYaml}>
+                  <FileCode className="w-4 h-4 mr-2" />
+                  Export as YAML
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             {/* Toggle Right Panel */}
             <Button
@@ -274,6 +357,13 @@ export function WorkflowEditor({ className, onSave }: WorkflowEditorProps) {
           )}
         </div>
       </div>
+
+      {/* Templates Dialog */}
+      <WorkflowTemplatesDialog
+        open={templatesDialogOpen}
+        onOpenChange={setTemplatesDialogOpen}
+        onSelectTemplate={handleSelectTemplate}
+      />
     </ReactFlowProvider>
   )
 }
