@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using OrbitMesh.Core.Contracts;
@@ -17,6 +18,7 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
     private readonly IJobManager _jobManager;
     private readonly IProgressService _progressService;
     private readonly IStreamingService _streamingService;
+    private readonly IApiTokenService _tokenService;
     private readonly ILogger<AgentHub> _logger;
 
     /// <summary>
@@ -24,17 +26,24 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
     /// </summary>
     public const string AllAgentsGroup = "all-agents";
 
+    /// <summary>
+    /// Required scope for agent connections.
+    /// </summary>
+    public const string AgentScope = "agent";
+
     public AgentHub(
         IAgentRegistry agentRegistry,
         IJobManager jobManager,
         IProgressService progressService,
         IStreamingService streamingService,
+        IApiTokenService tokenService,
         ILogger<AgentHub> logger)
     {
         _agentRegistry = agentRegistry;
         _jobManager = jobManager;
         _progressService = progressService;
         _streamingService = streamingService;
+        _tokenService = tokenService;
         _logger = logger;
     }
 
@@ -44,6 +53,46 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
         _logger.LogInformation(
             "Agent connection initiated. ConnectionId: {ConnectionId}",
             Context.ConnectionId);
+
+        // Validate API token from query string or header
+        var httpContext = Context.GetHttpContext();
+        if (httpContext is not null)
+        {
+            var token = httpContext.Request.Query["access_token"].FirstOrDefault()
+                ?? httpContext.Request.Headers.Authorization.FirstOrDefault()?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrEmpty(token))
+            {
+                var validToken = await _tokenService.ValidateTokenAsync(token, AgentScope);
+                if (validToken is not null)
+                {
+                    Context.Items["TokenId"] = validToken.Id;
+                    Context.Items["TokenName"] = validToken.Name;
+                    await _tokenService.UpdateLastUsedAsync(validToken.Id);
+
+                    _logger.LogInformation(
+                        "Agent authenticated with token. TokenName: {TokenName}, ConnectionId: {ConnectionId}",
+                        validToken.Name,
+                        Context.ConnectionId);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Invalid or expired token provided. ConnectionId: {ConnectionId}",
+                        Context.ConnectionId);
+                    Context.Abort();
+                    return;
+                }
+            }
+            else
+            {
+                // Check if anonymous connections are allowed (token not required)
+                // For now, allow anonymous but log warning
+                _logger.LogWarning(
+                    "Agent connected without token. ConnectionId: {ConnectionId}. Consider requiring authentication in production.",
+                    Context.ConnectionId);
+            }
+        }
 
         await Groups.AddToGroupAsync(Context.ConnectionId, AllAgentsGroup);
         await base.OnConnectedAsync();

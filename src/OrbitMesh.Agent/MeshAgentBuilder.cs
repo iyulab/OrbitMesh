@@ -21,6 +21,7 @@ public sealed class MeshAgentBuilder
     private string _agentId = Guid.NewGuid().ToString("N");
     private string _agentName = Environment.MachineName;
     private string? _group;
+    private string? _accessToken;
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private Action<IHubConnectionBuilder>? _configureConnection;
     private TimeSpan _connectionTimeout = TimeSpan.FromSeconds(30);
@@ -68,6 +69,17 @@ public sealed class MeshAgentBuilder
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(group);
         _group = group;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the access token for server authentication.
+    /// </summary>
+    /// <param name="accessToken">The API token for authenticating with the server.</param>
+    public MeshAgentBuilder WithAccessToken(string accessToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(accessToken);
+        _accessToken = accessToken;
         return this;
     }
 
@@ -210,7 +222,13 @@ public sealed class MeshAgentBuilder
     public IMeshAgent Build()
     {
         var connectionBuilder = new HubConnectionBuilder()
-            .WithUrl(_serverUrl)
+            .WithUrl(_serverUrl, options =>
+            {
+                if (!string.IsNullOrEmpty(_accessToken))
+                {
+                    options.AccessTokenProvider = () => Task.FromResult<string?>(_accessToken);
+                }
+            })
             .WithAutomaticReconnect()
             .AddMessagePackProtocol();
 

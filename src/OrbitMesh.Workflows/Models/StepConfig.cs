@@ -17,6 +17,7 @@ namespace OrbitMesh.Workflows.Models;
 [Union(7, typeof(TransformStepConfig))]
 [Union(8, typeof(NotifyStepConfig))]
 [Union(9, typeof(ApprovalStepConfig))]
+[Union(10, typeof(LogStepConfig))]
 public abstract record StepConfig;
 
 /// <summary>
@@ -346,4 +347,23 @@ public enum ApprovalTimeoutAction
     /// Auto-reject on timeout.
     /// </summary>
     Reject = 2
+}
+
+/// <summary>
+/// Configuration for logging a message.
+/// </summary>
+[MessagePackObject]
+public sealed record LogStepConfig : StepConfig
+{
+    /// <summary>
+    /// Log level (Debug, Info, Warning, Error).
+    /// </summary>
+    [Key(0)]
+    public string Level { get; init; } = "Info";
+
+    /// <summary>
+    /// Message template with expression support (e.g., "Processing ${item}").
+    /// </summary>
+    [Key(1)]
+    public required string Message { get; init; }
 }

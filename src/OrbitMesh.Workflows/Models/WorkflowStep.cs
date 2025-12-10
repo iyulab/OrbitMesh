@@ -136,7 +136,12 @@ public enum StepType
     /// <summary>
     /// Human approval gate - pause until approved.
     /// </summary>
-    Approval = 9
+    Approval = 9,
+
+    /// <summary>
+    /// Log a message for debugging/monitoring.
+    /// </summary>
+    Log = 10
 }
 
 /// <summary>

@@ -31,6 +31,10 @@ try
         ?? builder.Configuration["AGENT_NAME"]
         ?? Environment.MachineName;
 
+    var accessToken = builder.Configuration["OrbitMesh:AccessToken"]
+        ?? builder.Configuration["ORBITMESH_TOKEN"]
+        ?? string.Empty;
+
     var tags = builder.Configuration["OrbitMesh:Tags"]
         ?? builder.Configuration["AGENT_TAGS"]
         ?? string.Empty;
@@ -42,6 +46,14 @@ try
 
     Log.Information("Connecting to server at {ServerUrl}", serverUrl);
     Log.Information("Agent name: {AgentName}", agentName);
+    if (!string.IsNullOrEmpty(accessToken))
+    {
+        Log.Information("Using access token for authentication");
+    }
+    else
+    {
+        Log.Warning("No access token configured. Consider setting OrbitMesh:AccessToken or ORBITMESH_TOKEN for production.");
+    }
     if (!string.IsNullOrEmpty(tags))
     {
         Log.Information("Agent tags: {Tags}", tags);
@@ -51,6 +63,12 @@ try
     builder.Services.AddOrbitMeshAgentHostedService(serverUrl, agent =>
     {
         agent.WithName(agentName);
+
+        // Configure access token for authentication
+        if (!string.IsNullOrEmpty(accessToken))
+        {
+            agent.WithAccessToken(accessToken);
+        }
 
         // Add tags from configuration
         if (!string.IsNullOrEmpty(tags))
