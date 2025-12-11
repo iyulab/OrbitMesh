@@ -6,6 +6,7 @@ import type {
   JobStatus,
   AgentStatus,
 } from '@/types/api'
+import type { WorkflowDefinition, WorkflowInstance } from '@/types/workflow'
 
 const API_BASE = '/api'
 
@@ -101,5 +102,36 @@ export async function cancelJob(jobId: string, reason?: string): Promise<void> {
 export async function retryJob(jobId: string): Promise<Job> {
   return fetchApi<Job>(`/jobs/${jobId}/retry`, {
     method: 'POST',
+  })
+}
+
+// Workflows
+export async function getWorkflows(): Promise<WorkflowDefinition[]> {
+  return fetchApi<WorkflowDefinition[]>('/workflows')
+}
+
+export async function getWorkflow(workflowId: string): Promise<WorkflowDefinition> {
+  return fetchApi<WorkflowDefinition>(`/workflows/${workflowId}`)
+}
+
+export async function createWorkflow(definition: Partial<WorkflowDefinition>): Promise<WorkflowDefinition> {
+  return fetchApi<WorkflowDefinition>('/workflows', {
+    method: 'POST',
+    body: JSON.stringify(definition),
+  })
+}
+
+export async function getWorkflowInstances(workflowId?: string): Promise<WorkflowInstance[]> {
+  const query = workflowId ? `?workflowId=${workflowId}` : ''
+  return fetchApi<WorkflowInstance[]>(`/workflows/instances${query}`)
+}
+
+export async function startWorkflow(
+  workflowId: string,
+  input?: Record<string, unknown>
+): Promise<WorkflowInstance> {
+  return fetchApi<WorkflowInstance>(`/workflows/${workflowId}/start`, {
+    method: 'POST',
+    body: JSON.stringify({ input }),
   })
 }

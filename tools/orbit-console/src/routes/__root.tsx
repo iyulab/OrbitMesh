@@ -3,7 +3,9 @@ import { TanStackRouterDevtools } from '@tanstack/router-devtools'
 import type { QueryClient } from '@tanstack/react-query'
 import { Sidebar, Header } from '@/components/layout'
 import { useConnectionStore } from '@/stores/connection'
+import { useSignalRQueryInvalidation } from '@/hooks'
 import { useEffect } from 'react'
+import { Toaster } from 'sonner'
 
 interface RouterContext {
   queryClient: QueryClient
@@ -21,6 +23,9 @@ function RootLayout() {
     connect()
   }, [connect])
 
+  // Enable real-time query invalidation
+  useSignalRQueryInvalidation()
+
   return (
     <div className="flex h-screen bg-background">
       <Sidebar />
@@ -30,6 +35,7 @@ function RootLayout() {
           <Outlet />
         </main>
       </div>
+      <Toaster position="top-right" richColors closeButton />
       {import.meta.env.DEV && <TanStackRouterDevtools position="bottom-right" />}
     </div>
   )

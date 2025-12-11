@@ -110,3 +110,5 @@ claude-docs/
 local-docs/
 research-docs/
 nul
+# Auto-generated files
+**/routeTree.gen.ts
