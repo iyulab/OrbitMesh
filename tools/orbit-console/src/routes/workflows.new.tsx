@@ -133,9 +133,9 @@ function NewWorkflowPage() {
         </Button>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Left Panel - Workflow Properties */}
-        <div className="space-y-6">
+      <div className="flex flex-col lg:flex-row gap-6">
+        {/* Left Panel - Workflow Properties & Node Palette */}
+        <div className="w-full lg:w-80 xl:w-96 flex-shrink-0 space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="text-sm">Workflow Properties</CardTitle>
@@ -179,7 +179,7 @@ function NewWorkflowPage() {
               <CardTitle className="text-sm">Add Step</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-2">
                 {stepTypes.map((type) => (
                   <button
                     key={type.value}
@@ -187,7 +187,7 @@ function NewWorkflowPage() {
                     className="flex flex-col items-start p-3 rounded-lg border hover:border-primary hover:bg-primary/5 transition-colors text-left"
                   >
                     <span className="text-sm font-medium">{type.label}</span>
-                    <span className="text-xs text-muted-foreground line-clamp-1">
+                    <span className="text-xs text-muted-foreground">
                       {type.description}
                     </span>
                   </button>
@@ -198,7 +198,7 @@ function NewWorkflowPage() {
         </div>
 
         {/* Right Panel - Steps Designer */}
-        <div className="lg:col-span-2">
+        <div className="flex-1 min-w-0">
           <Card className="h-full">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
