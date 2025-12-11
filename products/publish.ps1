@@ -37,8 +37,8 @@ function Write-Info($message) { Write-Host "   $message" -ForegroundColor Gray }
 # Paths
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SolutionRoot = Split-Path -Parent $ScriptDir
-$ServerProject = Join-Path $ScriptDir "orbit-server\orbit-server.csproj"
-$AgentProject = Join-Path $ScriptDir "orbit-agent\orbit-agent.csproj"
+$ServerProject = Join-Path $ScriptDir "orbit-host\orbit-host.csproj"
+$AgentProject = Join-Path $ScriptDir "orbit-node\orbit-node.csproj"
 
 $ServerOutput = Join-Path $OutputDir "server"
 $AgentOutput = Join-Path $OutputDir "agent"

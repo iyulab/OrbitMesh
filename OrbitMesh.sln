@@ -7,9 +7,9 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Core", "src\OrbitMesh.Core\OrbitMesh.Core.csproj", "{FF14C359-003E-4087-A383-FBDCD69F0883}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Server", "src\OrbitMesh.Server\OrbitMesh.Server.csproj", "{C9F6E863-22FA-4E46-AF3F-218CA94FD45E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Host", "src\OrbitMesh.Host\OrbitMesh.Host.csproj", "{C9F6E863-22FA-4E46-AF3F-218CA94FD45E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Agent", "src\OrbitMesh.Agent\OrbitMesh.Agent.csproj", "{6E4619C2-C0FF-4059-B126-75ABCB54B45F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Node", "src\OrbitMesh.Node\OrbitMesh.Node.csproj", "{6E4619C2-C0FF-4059-B126-75ABCB54B45F}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Workflows", "src\OrbitMesh.Workflows\OrbitMesh.Workflows.csproj", "{0DB1ABB8-8043-40E8-912E-A7118E4822F1}"
 EndProject
@@ -19,9 +19,9 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Core.Tests", "tests\OrbitMesh.Core.Tests\OrbitMesh.Core.Tests.csproj", "{ED718769-1278-487B-870B-6AAA044B602F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Server.Tests", "tests\OrbitMesh.Server.Tests\OrbitMesh.Server.Tests.csproj", "{E2677150-FFCC-44F5-890F-6633F5A4CB0B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Host.Tests", "tests\OrbitMesh.Host.Tests\OrbitMesh.Host.Tests.csproj", "{E2677150-FFCC-44F5-890F-6633F5A4CB0B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Agent.Tests", "tests\OrbitMesh.Agent.Tests\OrbitMesh.Agent.Tests.csproj", "{AC01AC56-D0D0-4C83-B393-52B43EB29BE9}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Node.Tests", "tests\OrbitMesh.Node.Tests\OrbitMesh.Node.Tests.csproj", "{AC01AC56-D0D0-4C83-B393-52B43EB29BE9}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Integration.Tests", "tests\OrbitMesh.Integration.Tests\OrbitMesh.Integration.Tests.csproj", "{B71AE4F6-1CD9-496B-BBD0-84768133279C}"
 EndProject
@@ -33,9 +33,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Workflows.Tests",
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "products", "products", "{91DB166F-8FA8-D710-9FF9-784B929F57E0}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "orbit-server", "products\orbit-server\orbit-server.csproj", "{8AD16038-274D-45BC-8D94-B9B511D6C480}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "orbit-host", "products\orbit-host\orbit-host.csproj", "{8AD16038-274D-45BC-8D94-B9B511D6C480}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "orbit-agent", "products\orbit-agent\orbit-agent.csproj", "{5A69A02A-ED29-4947-9FDF-B130EDC69A20}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "orbit-node", "products\orbit-node\orbit-node.csproj", "{5A69A02A-ED29-4947-9FDF-B130EDC69A20}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

@@ -1,5 +1,5 @@
 # OrbitMesh Development Environment Launcher
-# Launches orbit-server, orbit-agent, and React dev server in Windows Terminal tabs
+# Launches orbit-host, orbit-node, and React dev server in Windows Terminal tabs
 
 param(
     [int]$AgentCount = 1,
@@ -26,9 +26,9 @@ if (-not $wtPath) {
 }
 
 # Project paths
-$serverProject = Join-Path $ScriptDir "orbit-server\orbit-server.csproj"
-$agentProject = Join-Path $ScriptDir "orbit-agent\orbit-agent.csproj"
-$clientAppDir = Join-Path $ScriptDir "orbit-server\ClientApp"
+$serverProject = Join-Path $ScriptDir "orbit-host\orbit-host.csproj"
+$agentProject = Join-Path $ScriptDir "orbit-node\orbit-node.csproj"
+$clientAppDir = Join-Path $ScriptDir "orbit-host\ClientApp"
 
 # Check if ClientApp has node_modules
 $nodeModulesDir = Join-Path $clientAppDir "node_modules"
@@ -67,11 +67,11 @@ if (-not $NoBuild) {
 
 Write-Host ""
 Write-Host "Starting services:" -ForegroundColor Yellow
-Write-Host "  - orbit-server (port 5000)" -ForegroundColor Gray
+Write-Host "  - orbit-host (port 5000)" -ForegroundColor Gray
 if (-not $NoUI) {
     Write-Host "  - React dev server (port 5173)" -ForegroundColor Gray
 }
-Write-Host "  - orbit-agent x$AgentCount" -ForegroundColor Gray
+Write-Host "  - orbit-node x$AgentCount" -ForegroundColor Gray
 Write-Host ""
 
 # Create temporary script files for each tab
@@ -83,7 +83,7 @@ if (-not (Test-Path $tempDir)) {
 # Server script
 $serverScript = Join-Path $tempDir "run-server.ps1"
 @"
-`$Host.UI.RawUI.WindowTitle = 'orbit-server'
+`$Host.UI.RawUI.WindowTitle = 'orbit-host'
 `$env:ASPNETCORE_ENVIRONMENT = 'Development'
 Write-Host 'Starting OrbitMesh Server (Development)...' -ForegroundColor Cyan
 dotnet run --project "$serverProject" --no-build
@@ -122,7 +122,7 @@ $wtArgs = @()
 # Server tab
 $wtArgs += "new-tab"
 $wtArgs += "--title"
-$wtArgs += "`"orbit-server`""
+$wtArgs += "`"orbit-host`""
 $wtArgs += "--tabColor"
 $wtArgs += "`"#0078D4`""
 $wtArgs += "pwsh"

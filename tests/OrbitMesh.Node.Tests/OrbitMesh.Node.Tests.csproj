@@ -15,9 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\OrbitMesh.Host\OrbitMesh.Host.csproj" />
     <ProjectReference Include="..\..\src\OrbitMesh.Node\OrbitMesh.Node.csproj" />
-    <ProjectReference Include="..\..\src\OrbitMesh.Storage.Sqlite\OrbitMesh.Storage.Sqlite.csproj" />
   </ItemGroup>
 
   <ItemGroup>

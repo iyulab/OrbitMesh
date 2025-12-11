@@ -1,7 +1,8 @@
 using OrbitMesh.Core.Contracts;
 using OrbitMesh.Core.Models;
-using OrbitMesh.Server.Hubs;
-using OrbitMesh.Server.Services;
+using OrbitMesh.Host.Hubs;
+using OrbitMesh.Host.Services;
+using Node = OrbitMesh.Node;
 
 namespace OrbitMesh.Integration.Tests;
 
@@ -29,12 +30,12 @@ public class IntegrationTests
     }
 
     [Fact]
-    public void Agent_Types_Are_Available()
+    public void Node_Types_Are_Available()
     {
         // Arrange & Act & Assert
-        typeof(Agent.IMeshAgent).Should().NotBeNull();
-        typeof(Agent.MeshAgentBuilder).Should().NotBeNull();
-        typeof(Agent.IHandlerRegistry).Should().NotBeNull();
+        typeof(Node.IMeshAgent).Should().NotBeNull();
+        typeof(Node.MeshAgentBuilder).Should().NotBeNull();
+        typeof(Node.IHandlerRegistry).Should().NotBeNull();
     }
 
     [Fact]
