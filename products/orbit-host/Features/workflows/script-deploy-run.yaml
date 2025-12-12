@@ -1,0 +1,171 @@
+# Script Deploy and Run Workflow
+# Deploy and execute scripts on remote agents
+
+id: orbit:builtin:script-deploy-run
+name: Script Deploy and Run
+version: "1.0.0"
+description: |
+  Deploys a script file to target agents and executes it.
+  Supports various script types (bash, PowerShell, Python).
+enabled: true
+
+tags:
+  - built-in
+  - script-execution
+  - deployment
+  - automation
+
+triggers:
+  # Manual deployment
+  - id: manual-deploy
+    type: manual
+    name: Deploy and Run Script
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to deploy to
+      script_content:
+        type: string
+        required: true
+        description: Script content to deploy
+      script_name:
+        type: string
+        required: true
+        description: Name for the script file
+      script_type:
+        type: string
+        required: false
+        default: "bash"
+        description: Script type (bash, powershell, python)
+      arguments:
+        type: string
+        required: false
+        description: Arguments to pass to the script
+      cleanup:
+        type: boolean
+        required: false
+        default: true
+        description: Remove script after execution
+
+steps:
+  # Step 1: Prepare script
+  - id: prepare-script
+    name: Prepare Script
+    type: script
+    language: javascript
+    script: |
+      const scriptType = context.input?.script_type || 'bash';
+      const scriptName = context.input?.script_name;
+      const content = context.input?.script_content;
+
+      // Determine file extension and interpreter
+      const typeConfig = {
+        bash: { ext: '.sh', interpreter: '/bin/bash', shebang: '#!/bin/bash\n' },
+        powershell: { ext: '.ps1', interpreter: 'powershell', shebang: '' },
+        python: { ext: '.py', interpreter: 'python3', shebang: '#!/usr/bin/env python3\n' }
+      };
+
+      const config = typeConfig[scriptType] || typeConfig.bash;
+      const fileName = scriptName.endsWith(config.ext) ? scriptName : scriptName + config.ext;
+      const fullContent = content.startsWith('#!') ? content : config.shebang + content;
+
+      return {
+        fileName: fileName,
+        content: fullContent,
+        interpreter: config.interpreter,
+        scriptType: scriptType,
+        tempPath: `/tmp/orbit_scripts/${fileName}`
+      };
+    output_variable: scriptPrep
+
+  # Step 2: Upload script to agents
+  - id: upload-script
+    name: Upload Script
+    type: job
+    command: orbit:file.upload
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      path: "${scriptPrep.tempPath}"
+      content: "${scriptPrep.content}"
+      createDirectory: true
+      permissions: "755"
+    timeout: 60s
+    output_variable: uploadResults
+
+  # Step 3: Execute script
+  - id: execute-script
+    name: Execute Script
+    type: job
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "${scriptPrep.interpreter} ${scriptPrep.tempPath} ${input.arguments ?? ''}"
+      timeout: 600
+    timeout: 600s
+    output_variable: execResults
+
+  # Step 4: Cleanup script (if requested)
+  - id: cleanup-script
+    name: Cleanup Script
+    type: job
+    condition: "${input.cleanup ?? true}"
+    command: orbit:file.delete
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      path: "${scriptPrep.tempPath}"
+    timeout: 30s
+    output_variable: cleanupResults
+
+  # Step 5: Generate report
+  - id: generate-report
+    name: Generate Report
+    type: script
+    language: javascript
+    script: |
+      const uploads = context.uploadResults || [];
+      const executions = context.execResults || [];
+      const cleanups = context.cleanupResults || [];
+
+      const report = executions.map(exec => {
+        const upload = uploads.find(u => u.agentId === exec.agentId);
+        const cleanup = cleanups.find(c => c.agentId === exec.agentId);
+
+        return {
+          agentId: exec.agentId,
+          uploadSuccess: upload?.status === 'Completed',
+          execSuccess: exec.status === 'Completed' && exec.result?.exitCode === 0,
+          exitCode: exec.result?.exitCode,
+          stdout: exec.result?.stdout,
+          stderr: exec.result?.stderr,
+          cleanupSuccess: cleanup?.status === 'Completed'
+        };
+      });
+
+      const successful = report.filter(r => r.execSuccess);
+
+      return {
+        timestamp: new Date().toISOString(),
+        scriptName: context.scriptPrep.fileName,
+        totalAgents: report.length,
+        successful: successful.length,
+        failed: report.length - successful.length,
+        details: report
+      };
+    output_variable: deployReport
+
+  # Step 6: Alert on failures
+  - id: alert-failures
+    name: Alert on Failures
+    type: notification
+    condition: "${deployReport.failed > 0}"
+    channel: default
+    message: |
+      Script Deployment/Execution Failed
+
+      Script: ${deployReport.scriptName}
+      Success: ${deployReport.successful}/${deployReport.totalAgents}
+
+      Check workflow execution details for more information.
+    severity: error

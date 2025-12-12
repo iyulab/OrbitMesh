@@ -1,0 +1,209 @@
+# Configuration Deployment Workflow
+# Deploy configuration files to agents with backup
+
+id: orbit:builtin:config-deploy
+name: Configuration Deployment
+version: "1.0.0"
+description: |
+  Deploys configuration files to target agents with automatic backup
+  of existing files and validation support.
+enabled: true
+
+tags:
+  - built-in
+  - file-management
+  - configuration
+  - deployment
+
+triggers:
+  # Manual configuration deployment
+  - id: manual-config-deploy
+    type: manual
+    name: Deploy Configuration
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to deploy to
+      source_path:
+        type: string
+        required: true
+        description: Source path on server
+      target_path:
+        type: string
+        required: true
+        description: Target path on agents
+      backup:
+        type: boolean
+        required: false
+        default: true
+        description: Backup existing file before deployment
+      validate_command:
+        type: string
+        required: false
+        description: Command to validate configuration after deployment
+      rollback_on_failure:
+        type: boolean
+        required: false
+        default: true
+        description: Rollback if validation fails
+
+steps:
+  # Step 1: Check if target file exists
+  - id: check-existing
+    name: Check Existing Configuration
+    type: job
+    command: orbit:file.exists
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      path: "${input.target_path}"
+    timeout: 30s
+    output_variable: existsCheck
+
+  # Step 2: Backup existing configuration
+  - id: backup-config
+    name: Backup Existing Configuration
+    type: job
+    condition: "${input.backup ?? true}"
+    command: orbit:file.download
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      path: "${input.target_path}"
+    timeout: 60s
+    output_variable: backupResults
+
+  # Step 3: Store backup information
+  - id: store-backup-info
+    name: Store Backup Information
+    type: script
+    language: javascript
+    script: |
+      const backups = context.backupResults || [];
+      const existsChecks = context.existsCheck || [];
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+      const backupInfo = backups.map(b => {
+        const exists = existsChecks.find(e => e.agentId === b.agentId);
+        return {
+          agentId: b.agentId,
+          hadExisting: exists?.result?.exists === true,
+          backupPath: `${context.input.target_path}.backup.${timestamp}`,
+          originalContent: b.result?.content,
+          status: b.status
+        };
+      });
+
+      return {
+        timestamp: timestamp,
+        backups: backupInfo
+      };
+    output_variable: backupInfo
+
+  # Step 4: Deploy new configuration
+  - id: deploy-config
+    name: Deploy Configuration
+    type: job
+    command: orbit:file.sync
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      sourcePath: "${input.source_path}"
+      targetPath: "${input.target_path}"
+      direction: "ServerToAgent"
+    timeout: 120s
+    output_variable: deployResults
+
+  # Step 5: Validate configuration (if command provided)
+  - id: validate-config
+    name: Validate Configuration
+    type: job
+    condition: "${input.validate_command != null && input.validate_command != ''}"
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "${input.validate_command}"
+      timeout: 60
+    timeout: 60s
+    output_variable: validationResults
+
+  # Step 6: Rollback on validation failure
+  - id: rollback-config
+    name: Rollback on Failure
+    type: script
+    language: javascript
+    script: |
+      const deployResults = context.deployResults || [];
+      const validationResults = context.validationResults || [];
+      const backupInfo = context.backupInfo;
+      const rollbackEnabled = context.input?.rollback_on_failure ?? true;
+
+      const failedAgents = validationResults
+        .filter(v => v.status !== 'Completed' || v.result?.exitCode !== 0)
+        .map(v => v.agentId);
+
+      const needsRollback = rollbackEnabled && failedAgents.length > 0;
+
+      return {
+        needsRollback: needsRollback,
+        failedAgents: failedAgents,
+        rollbackData: needsRollback ? backupInfo.backups.filter(b => failedAgents.includes(b.agentId)) : []
+      };
+    output_variable: rollbackCheck
+
+  # Step 7: Generate deployment report
+  - id: generate-report
+    name: Generate Deployment Report
+    type: script
+    language: javascript
+    script: |
+      const deployResults = context.deployResults || [];
+      const validationResults = context.validationResults || [];
+      const rollbackCheck = context.rollbackCheck;
+
+      const report = deployResults.map(d => {
+        const validation = validationResults.find(v => v.agentId === d.agentId);
+        const rolledBack = rollbackCheck.failedAgents.includes(d.agentId);
+
+        return {
+          agentId: d.agentId,
+          deployStatus: d.status,
+          validationStatus: validation?.status || 'N/A',
+          validationExitCode: validation?.result?.exitCode,
+          rolledBack: rolledBack,
+          finalStatus: rolledBack ? 'Rolled Back' : (d.status === 'Completed' ? 'Success' : 'Failed')
+        };
+      });
+
+      const successful = report.filter(r => r.finalStatus === 'Success');
+
+      return {
+        timestamp: new Date().toISOString(),
+        sourcePath: context.input.source_path,
+        targetPath: context.input.target_path,
+        totalAgents: report.length,
+        successful: successful.length,
+        rolledBack: rollbackCheck.failedAgents.length,
+        failed: report.length - successful.length - rollbackCheck.failedAgents.length,
+        details: report
+      };
+    output_variable: deployReport
+
+  # Step 8: Send notification
+  - id: notify-result
+    name: Notify Deployment Result
+    type: notification
+    channel: default
+    message: |
+      Configuration Deployment Complete
+
+      Source: ${deployReport.sourcePath}
+      Target: ${deployReport.targetPath}
+
+      Results:
+      - Successful: ${deployReport.successful}
+      - Rolled Back: ${deployReport.rolledBack}
+      - Failed: ${deployReport.failed}
+      - Total: ${deployReport.totalAgents}
+
+      Time: ${deployReport.timestamp}
+    severity: "${deployReport.failed > 0 ? 'error' : (deployReport.rolledBack > 0 ? 'warning' : 'info')}"

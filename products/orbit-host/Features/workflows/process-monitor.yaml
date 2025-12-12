@@ -1,0 +1,179 @@
+# Process Monitor Workflow
+# Monitor specific processes on agents
+
+id: orbit:builtin:process-monitor
+name: Process Monitor
+version: "1.0.0"
+description: |
+  Monitors specific processes on agents and alerts
+  when processes are not running or consuming excessive resources.
+enabled: true
+
+tags:
+  - built-in
+  - monitoring
+  - process
+  - alerting
+
+triggers:
+  # Scheduled process check
+  - id: scheduled-process-check
+    type: schedule
+    name: Scheduled Process Check
+    interval: 2m
+    max_concurrent: 10
+
+  # Manual process check
+  - id: manual-process-check
+    type: manual
+    name: Manual Process Check
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to check
+      process_names:
+        type: array
+        required: true
+        description: List of process names to monitor
+      cpu_threshold:
+        type: integer
+        required: false
+        default: 80
+        description: CPU usage threshold percentage
+      memory_threshold:
+        type: integer
+        required: false
+        default: 80
+        description: Memory usage threshold percentage
+
+steps:
+  # Step 1: Get process list
+  - id: get-processes
+    name: Get Process List
+    type: job
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "ps aux"
+      timeout: 30
+    timeout: 30s
+    output_variable: processResults
+
+  # Step 2: Analyze processes
+  - id: analyze-processes
+    name: Analyze Processes
+    type: script
+    language: javascript
+    script: |
+      const results = context.processResults || [];
+      const targetProcesses = context.input?.process_names || [];
+      const cpuThreshold = context.input?.cpu_threshold || 80;
+      const memThreshold = context.input?.memory_threshold || 80;
+
+      const analysis = results.map(r => {
+        const stdout = r.result?.stdout || '';
+        const lines = stdout.split('\n').slice(1); // Skip header
+
+        const foundProcesses = targetProcesses.map(procName => {
+          const matching = lines.filter(line =>
+            line.toLowerCase().includes(procName.toLowerCase())
+          );
+
+          if (matching.length === 0) {
+            return {
+              name: procName,
+              found: false,
+              instances: 0,
+              status: 'not_running'
+            };
+          }
+
+          // Parse process info (simplified)
+          const instances = matching.map(line => {
+            const parts = line.split(/\s+/);
+            return {
+              pid: parts[1],
+              cpu: parseFloat(parts[2]) || 0,
+              mem: parseFloat(parts[3]) || 0
+            };
+          });
+
+          const maxCpu = Math.max(...instances.map(i => i.cpu));
+          const maxMem = Math.max(...instances.map(i => i.mem));
+
+          return {
+            name: procName,
+            found: true,
+            instances: instances.length,
+            maxCpu: maxCpu,
+            maxMem: maxMem,
+            cpuAlert: maxCpu > cpuThreshold,
+            memAlert: maxMem > memThreshold,
+            status: (maxCpu > cpuThreshold || maxMem > memThreshold) ? 'alert' : 'ok'
+          };
+        });
+
+        return {
+          agentId: r.agentId,
+          queryStatus: r.status,
+          processes: foundProcesses
+        };
+      });
+
+      // Aggregate issues
+      const issues = [];
+      analysis.forEach(a => {
+        a.processes.forEach(p => {
+          if (!p.found) {
+            issues.push({ agentId: a.agentId, process: p.name, issue: 'not_running' });
+          } else if (p.cpuAlert) {
+            issues.push({ agentId: a.agentId, process: p.name, issue: 'high_cpu', value: p.maxCpu });
+          } else if (p.memAlert) {
+            issues.push({ agentId: a.agentId, process: p.name, issue: 'high_memory', value: p.maxMem });
+          }
+        });
+      });
+
+      return {
+        timestamp: new Date().toISOString(),
+        thresholds: { cpu: cpuThreshold, memory: memThreshold },
+        totalAgents: analysis.length,
+        monitoredProcesses: targetProcesses,
+        issueCount: issues.length,
+        issues: issues,
+        details: analysis
+      };
+    output_variable: processAnalysis
+
+  # Step 3: Alert on issues
+  - id: alert-issues
+    name: Alert Process Issues
+    type: notification
+    condition: "${processAnalysis.issueCount > 0}"
+    channel: default
+    message: |
+      Process Monitor Alert
+
+      ${processAnalysis.issueCount} issue(s) detected:
+
+      ${processAnalysis.issues.map(i => {
+        if (i.issue === 'not_running') return `- ${i.agentId}: ${i.process} NOT RUNNING`;
+        if (i.issue === 'high_cpu') return `- ${i.agentId}: ${i.process} HIGH CPU (${i.value}%)`;
+        if (i.issue === 'high_memory') return `- ${i.agentId}: ${i.process} HIGH MEMORY (${i.value}%)`;
+        return `- ${i.agentId}: ${i.process} ${i.issue}`;
+      }).join('\n')}
+
+      Time: ${processAnalysis.timestamp}
+    severity: warning
+
+  # Step 4: Log summary
+  - id: log-summary
+    name: Log Process Summary
+    type: script
+    language: javascript
+    script: |
+      const analysis = context.processAnalysis;
+      console.log(`Process monitor: ${analysis.issueCount} issues across ${analysis.totalAgents} agents`);
+      return analysis;

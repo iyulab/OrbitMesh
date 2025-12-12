@@ -1,0 +1,129 @@
+# Remote Execution Workflow
+# Execute commands on remote agents
+
+id: orbit:builtin:remote-exec
+name: Remote Command Execution
+version: "1.0.0"
+description: |
+  Executes shell commands on target agents with output capture
+  and error handling.
+enabled: true
+
+tags:
+  - built-in
+  - script-execution
+  - remote
+  - command
+
+triggers:
+  # Manual execution
+  - id: manual-exec
+    type: manual
+    name: Execute Command
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to execute on
+      command:
+        type: string
+        required: true
+        description: Command to execute
+      timeout:
+        type: integer
+        required: false
+        default: 300
+        description: Timeout in seconds
+      working_directory:
+        type: string
+        required: false
+        description: Working directory for command execution
+
+steps:
+  # Step 1: Validate command
+  - id: validate-command
+    name: Validate Command
+    type: script
+    language: javascript
+    script: |
+      const command = context.input?.command;
+      if (!command || command.trim() === '') {
+        throw new Error('Command cannot be empty');
+      }
+
+      // Basic command validation (can be extended)
+      const dangerousPatterns = ['rm -rf /', 'format c:', ':(){ :|:& };:'];
+      for (const pattern of dangerousPatterns) {
+        if (command.includes(pattern)) {
+          throw new Error(`Potentially dangerous command detected: ${pattern}`);
+        }
+      }
+
+      return {
+        command: command.trim(),
+        isValid: true
+      };
+    output_variable: validation
+
+  # Step 2: Execute command on agents
+  - id: execute-command
+    name: Execute Command
+    type: job
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "${validation.command}"
+      timeout: "${input.timeout ?? 300}"
+      workingDirectory: "${input.working_directory}"
+    timeout: "${input.timeout ?? 300}s"
+    output_variable: execResults
+
+  # Step 3: Process results
+  - id: process-results
+    name: Process Execution Results
+    type: script
+    language: javascript
+    script: |
+      const results = context.execResults || [];
+      const timestamp = new Date().toISOString();
+
+      const processed = results.map(r => ({
+        agentId: r.agentId,
+        status: r.status,
+        exitCode: r.result?.exitCode,
+        stdout: r.result?.stdout,
+        stderr: r.result?.stderr,
+        executionTime: r.result?.executionTime,
+        error: r.error
+      }));
+
+      const successful = processed.filter(p => p.status === 'Completed' && p.exitCode === 0);
+      const failed = processed.filter(p => p.status !== 'Completed' || p.exitCode !== 0);
+
+      return {
+        timestamp: timestamp,
+        command: context.validation.command,
+        totalAgents: results.length,
+        successful: successful.length,
+        failed: failed.length,
+        results: processed,
+        failedAgents: failed.map(f => ({ agentId: f.agentId, reason: f.error || f.stderr || `Exit code: ${f.exitCode}` }))
+      };
+    output_variable: execReport
+
+  # Step 4: Alert on failures
+  - id: alert-failures
+    name: Alert on Failures
+    type: notification
+    condition: "${execReport.failed > 0}"
+    channel: default
+    message: |
+      Remote Execution Failed
+
+      Command: ${execReport.command}
+      Success: ${execReport.successful}/${execReport.totalAgents}
+
+      Failed Agents:
+      ${execReport.failedAgents.map(f => `- ${f.agentId}: ${f.reason}`).join('\n')}
+    severity: error

@@ -1,0 +1,155 @@
+# Disk Space Alert Workflow
+# Monitor disk space and alert on low disk conditions
+
+id: orbit:builtin:disk-space-alert
+name: Disk Space Alert
+version: "1.0.0"
+description: |
+  Monitors disk space on agents and sends alerts when
+  disk usage exceeds configured thresholds.
+enabled: true
+
+tags:
+  - built-in
+  - monitoring
+  - disk
+  - alerting
+
+triggers:
+  # Scheduled disk check
+  - id: scheduled-disk-check
+    type: schedule
+    name: Scheduled Disk Check
+    interval: 15m
+    max_concurrent: 10
+
+  # Manual disk check
+  - id: manual-disk-check
+    type: manual
+    name: Manual Disk Check
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to check
+      warning_threshold:
+        type: integer
+        required: false
+        default: 80
+        description: Warning threshold percentage
+      critical_threshold:
+        type: integer
+        required: false
+        default: 90
+        description: Critical threshold percentage
+
+steps:
+  # Step 1: Collect disk metrics
+  - id: collect-disk
+    name: Collect Disk Metrics
+    type: job
+    command: orbit:system.metrics
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 30s
+    output_variable: metricsResults
+
+  # Step 2: Analyze disk usage
+  - id: analyze-disk
+    name: Analyze Disk Usage
+    type: script
+    language: javascript
+    script: |
+      const results = context.metricsResults || [];
+      const warningThreshold = context.input?.warning_threshold || 80;
+      const criticalThreshold = context.input?.critical_threshold || 90;
+
+      const analysis = results.map(r => {
+        const diskUsage = r.result?.diskUsage || 0;
+        const totalDisk = r.result?.totalDisk || 0;
+        const usedDisk = r.result?.usedDisk || 0;
+        const freeDisk = totalDisk - usedDisk;
+
+        let severity = 'ok';
+        if (diskUsage >= criticalThreshold) severity = 'critical';
+        else if (diskUsage >= warningThreshold) severity = 'warning';
+
+        return {
+          agentId: r.agentId,
+          status: r.status,
+          diskUsage: diskUsage,
+          totalDisk: totalDisk,
+          usedDisk: usedDisk,
+          freeDisk: freeDisk,
+          freeDiskFormatted: formatBytes(freeDisk),
+          severity: severity
+        };
+      });
+
+      const critical = analysis.filter(a => a.severity === 'critical');
+      const warning = analysis.filter(a => a.severity === 'warning');
+      const ok = analysis.filter(a => a.severity === 'ok');
+
+      return {
+        timestamp: new Date().toISOString(),
+        thresholds: { warning: warningThreshold, critical: criticalThreshold },
+        totalAgents: analysis.length,
+        criticalCount: critical.length,
+        warningCount: warning.length,
+        okCount: ok.length,
+        criticalAgents: critical,
+        warningAgents: warning,
+        allAgents: analysis
+      };
+
+      function formatBytes(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+      }
+    output_variable: diskAnalysis
+
+  # Step 3: Send critical alert
+  - id: alert-critical
+    name: Send Critical Alert
+    type: notification
+    condition: "${diskAnalysis.criticalCount > 0}"
+    channel: default
+    message: |
+      CRITICAL: Disk Space Alert
+
+      ${diskAnalysis.criticalCount} agent(s) with critical disk usage (>= ${diskAnalysis.thresholds.critical}%):
+
+      ${diskAnalysis.criticalAgents.map(a => `- ${a.agentId}: ${a.diskUsage}% used (${a.freeDiskFormatted} free)`).join('\n')}
+
+      Immediate action required!
+      Time: ${diskAnalysis.timestamp}
+    severity: critical
+
+  # Step 4: Send warning alert
+  - id: alert-warning
+    name: Send Warning Alert
+    type: notification
+    condition: "${diskAnalysis.warningCount > 0 && diskAnalysis.criticalCount === 0}"
+    channel: default
+    message: |
+      WARNING: Disk Space Alert
+
+      ${diskAnalysis.warningCount} agent(s) with elevated disk usage (>= ${diskAnalysis.thresholds.warning}%):
+
+      ${diskAnalysis.warningAgents.map(a => `- ${a.agentId}: ${a.diskUsage}% used (${a.freeDiskFormatted} free)`).join('\n')}
+
+      Time: ${diskAnalysis.timestamp}
+    severity: warning
+
+  # Step 5: Log summary
+  - id: log-summary
+    name: Log Disk Summary
+    type: script
+    language: javascript
+    script: |
+      const analysis = context.diskAnalysis;
+      console.log(`Disk check: ${analysis.okCount} ok, ${analysis.warningCount} warning, ${analysis.criticalCount} critical`);
+      return analysis;

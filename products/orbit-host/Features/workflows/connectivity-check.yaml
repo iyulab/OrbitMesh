@@ -1,0 +1,206 @@
+# Connectivity Check Workflow
+# Check network connectivity from agents
+
+id: orbit:builtin:connectivity-check
+name: Connectivity Check
+version: "1.0.0"
+description: |
+  Tests network connectivity from agents to specified endpoints.
+  Useful for validating firewall rules and network paths.
+enabled: true
+
+tags:
+  - built-in
+  - monitoring
+  - network
+  - connectivity
+
+triggers:
+  # Scheduled connectivity check
+  - id: scheduled-connectivity
+    type: schedule
+    name: Scheduled Connectivity Check
+    interval: 10m
+    max_concurrent: 10
+
+  # Manual connectivity check
+  - id: manual-connectivity
+    type: manual
+    name: Manual Connectivity Check
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to check from
+      endpoints:
+        type: array
+        required: true
+        description: List of endpoints to check (host:port or URL)
+      timeout:
+        type: integer
+        required: false
+        default: 10
+        description: Timeout in seconds per endpoint
+
+steps:
+  # Step 1: Prepare connectivity tests
+  - id: prepare-tests
+    name: Prepare Connectivity Tests
+    type: script
+    language: javascript
+    script: |
+      const endpoints = context.input?.endpoints || [];
+      const timeout = context.input?.timeout || 10;
+
+      const tests = endpoints.map(endpoint => {
+        // Parse endpoint (could be host:port or URL)
+        let host, port, protocol;
+
+        if (endpoint.includes('://')) {
+          const url = new URL(endpoint);
+          host = url.hostname;
+          port = url.port || (url.protocol === 'https:' ? 443 : 80);
+          protocol = url.protocol.replace(':', '');
+        } else if (endpoint.includes(':')) {
+          [host, port] = endpoint.split(':');
+          protocol = 'tcp';
+        } else {
+          host = endpoint;
+          port = 80;
+          protocol = 'tcp';
+        }
+
+        return {
+          original: endpoint,
+          host: host,
+          port: parseInt(port),
+          protocol: protocol
+        };
+      });
+
+      return {
+        tests: tests,
+        timeout: timeout,
+        testCount: tests.length
+      };
+    output_variable: testPlan
+
+  # Step 2: Execute connectivity tests
+  - id: execute-tests
+    name: Execute Connectivity Tests
+    type: job
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "echo 'connectivity test placeholder'"
+      timeout: "${testPlan.timeout}"
+    timeout: "${testPlan.timeout * testPlan.testCount}s"
+    output_variable: testResults
+
+  # Step 3: Execute ping tests
+  - id: execute-ping
+    name: Execute Ping Tests
+    type: job
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "${testPlan.tests.map(t => `ping -c 1 -W ${testPlan.timeout} ${t.host}`).join(' && echo --- && ')}"
+      timeout: "${testPlan.timeout * testPlan.testCount}"
+    timeout: "${testPlan.timeout * testPlan.testCount + 30}s"
+    output_variable: pingResults
+
+  # Step 4: Analyze results
+  - id: analyze-results
+    name: Analyze Connectivity Results
+    type: script
+    language: javascript
+    script: |
+      const pingResults = context.pingResults || [];
+      const testPlan = context.testPlan;
+
+      const analysis = pingResults.map(r => {
+        const stdout = r.result?.stdout || '';
+        const exitCode = r.result?.exitCode;
+
+        // Parse ping results (simplified)
+        const testResults = testPlan.tests.map(test => {
+          // Check if this specific test passed
+          const testSuccess = exitCode === 0 && stdout.includes(test.host);
+
+          return {
+            endpoint: test.original,
+            host: test.host,
+            port: test.port,
+            reachable: testSuccess,
+            latency: testSuccess ? extractLatency(stdout, test.host) : null
+          };
+        });
+
+        const reachable = testResults.filter(t => t.reachable).length;
+        const unreachable = testResults.filter(t => !t.reachable).length;
+
+        return {
+          agentId: r.agentId,
+          status: r.status,
+          reachable: reachable,
+          unreachable: unreachable,
+          totalTests: testResults.length,
+          results: testResults
+        };
+      });
+
+      // Aggregate unreachable endpoints
+      const unreachableEndpoints = [];
+      analysis.forEach(a => {
+        a.results.filter(r => !r.reachable).forEach(r => {
+          unreachableEndpoints.push({
+            agentId: a.agentId,
+            endpoint: r.endpoint
+          });
+        });
+      });
+
+      return {
+        timestamp: new Date().toISOString(),
+        totalAgents: analysis.length,
+        totalTests: testPlan.testCount * analysis.length,
+        totalReachable: analysis.reduce((sum, a) => sum + a.reachable, 0),
+        totalUnreachable: unreachableEndpoints.length,
+        unreachableEndpoints: unreachableEndpoints,
+        details: analysis
+      };
+
+      function extractLatency(output, host) {
+        // Try to extract latency from ping output
+        const match = output.match(/time[=<](\d+\.?\d*)\s*ms/i);
+        return match ? parseFloat(match[1]) : null;
+      }
+    output_variable: connectivityAnalysis
+
+  # Step 5: Alert on connectivity issues
+  - id: alert-issues
+    name: Alert Connectivity Issues
+    type: notification
+    condition: "${connectivityAnalysis.totalUnreachable > 0}"
+    channel: default
+    message: |
+      Connectivity Alert
+
+      ${connectivityAnalysis.totalUnreachable} endpoint(s) unreachable:
+
+      ${connectivityAnalysis.unreachableEndpoints.map(u => `- ${u.agentId} -> ${u.endpoint}`).join('\n')}
+
+      Total Tests: ${connectivityAnalysis.totalReachable}/${connectivityAnalysis.totalTests} passed
+      Time: ${connectivityAnalysis.timestamp}
+    severity: warning
+
+  # Step 6: Log summary
+  - id: log-summary
+    name: Log Connectivity Summary
+    type: script
+    language: javascript
+    script: |
+      const analysis = context.connectivityAnalysis;
+      console.log(`Connectivity check: ${analysis.totalReachable}/${analysis.totalTests} endpoints reachable`);
+      return analysis;

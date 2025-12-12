@@ -1,0 +1,94 @@
+# Product-level Health Monitoring Workflow
+# Continuous agent health monitoring with alerting
+
+id: orbit:builtin:health-monitor
+name: Agent Health Monitor
+version: "1.0.0"
+description: |
+  Monitors agent health status at regular intervals.
+  Sends alerts when agents become unhealthy.
+enabled: true
+
+tags:
+  - built-in
+  - monitoring
+  - health
+  - alerting
+
+triggers:
+  # Scheduled health check
+  - id: scheduled-check
+    type: schedule
+    name: Scheduled Health Check
+    interval: 5m
+    max_concurrent: 1
+
+  # Manual health check
+  - id: manual-check
+    type: manual
+    name: Manual Health Check
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to check
+
+steps:
+  # Step 1: Check all agent health
+  - id: check-health
+    name: Check Agent Health
+    type: job
+    command: orbit:system.health
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 30s
+    output_variable: healthResults
+
+  # Step 2: Analyze results
+  - id: analyze-health
+    name: Analyze Health Results
+    type: script
+    language: javascript
+    script: |
+      const results = context.healthResults || [];
+      const unhealthy = results.filter(r => r.status !== 'Healthy');
+      const healthy = results.filter(r => r.status === 'Healthy');
+
+      return {
+        total: results.length,
+        healthy: healthy.length,
+        unhealthy: unhealthy.length,
+        unhealthyAgents: unhealthy.map(r => ({
+          agentId: r.agentId,
+          status: r.status,
+          message: r.message
+        })),
+        timestamp: new Date().toISOString()
+      };
+    output_variable: healthAnalysis
+
+  # Step 3: Send alert if unhealthy agents found
+  - id: send-alert
+    name: Send Unhealthy Alert
+    type: notification
+    condition: "${healthAnalysis.unhealthy > 0}"
+    channel: default
+    message: |
+      ⚠️ Agent Health Alert
+
+      Unhealthy Agents: ${healthAnalysis.unhealthy}/${healthAnalysis.total}
+
+      Details:
+      ${healthAnalysis.unhealthyAgents.map(a => `- ${a.agentId}: ${a.status} - ${a.message}`).join('\n')}
+
+      Time: ${healthAnalysis.timestamp}
+    severity: warning
+
+  # Step 4: Log summary
+  - id: log-summary
+    name: Log Health Summary
+    type: script
+    language: javascript
+    script: |
+      console.log(`Health check complete: ${context.healthAnalysis.healthy}/${context.healthAnalysis.total} healthy`);
+      return context.healthAnalysis;

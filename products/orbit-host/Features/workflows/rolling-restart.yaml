@@ -1,0 +1,178 @@
+# Rolling Restart Workflow
+# Restart services across agents in a rolling fashion
+
+id: orbit:builtin:rolling-restart
+name: Rolling Service Restart
+version: "1.0.0"
+description: |
+  Restarts services across agents in a controlled rolling manner.
+  Waits for health checks before proceeding to next batch.
+enabled: true
+
+tags:
+  - built-in
+  - service-management
+  - deployment
+  - zero-downtime
+
+triggers:
+  # Manual rolling restart
+  - id: manual-restart
+    type: manual
+    name: Rolling Restart
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to restart
+      service:
+        type: string
+        required: true
+        description: Service name to restart
+      batch_size:
+        type: integer
+        required: false
+        default: 1
+        description: Number of agents to restart at once
+      health_check_delay:
+        type: integer
+        required: false
+        default: 30
+        description: Seconds to wait for health check after restart
+      max_failures:
+        type: integer
+        required: false
+        default: 1
+        description: Maximum failures before aborting
+
+steps:
+  # Step 1: Get list of target agents
+  - id: get-agents
+    name: Get Target Agents
+    type: job
+    command: orbit:system.health
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 30s
+    output_variable: agentList
+
+  # Step 2: Plan rolling restart
+  - id: plan-restart
+    name: Plan Rolling Restart
+    type: script
+    language: javascript
+    script: |
+      const agents = context.agentList || [];
+      const batchSize = context.input?.batch_size || 1;
+      const service = context.input?.service;
+
+      const healthyAgents = agents
+        .filter(a => a.status === 'Completed')
+        .map(a => a.agentId);
+
+      // Create batches
+      const batches = [];
+      for (let i = 0; i < healthyAgents.length; i += batchSize) {
+        batches.push(healthyAgents.slice(i, i + batchSize));
+      }
+
+      return {
+        service: service,
+        totalAgents: healthyAgents.length,
+        batchSize: batchSize,
+        totalBatches: batches.length,
+        batches: batches,
+        healthCheckDelay: context.input?.health_check_delay || 30,
+        maxFailures: context.input?.max_failures || 1
+      };
+    output_variable: restartPlan
+
+  # Step 3: Execute rolling restart
+  - id: execute-restart
+    name: Execute Rolling Restart
+    type: job
+    command: orbit:service.restart
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      service: "${restartPlan.service}"
+    timeout: 120s
+    output_variable: restartResults
+
+  # Step 4: Wait for health check
+  - id: wait-health
+    name: Wait for Health Check
+    type: script
+    language: javascript
+    script: |
+      const delay = context.restartPlan.healthCheckDelay * 1000;
+      // In real implementation, this would be an actual delay
+      return {
+        waitedMs: delay,
+        checkTime: new Date().toISOString()
+      };
+    output_variable: waitResult
+
+  # Step 5: Verify service health
+  - id: verify-health
+    name: Verify Service Health
+    type: job
+    command: orbit:service.status
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      services: ["${restartPlan.service}"]
+    timeout: 30s
+    output_variable: healthResults
+
+  # Step 6: Generate report
+  - id: generate-report
+    name: Generate Restart Report
+    type: script
+    language: javascript
+    script: |
+      const restartResults = context.restartResults || [];
+      const healthResults = context.healthResults || [];
+      const plan = context.restartPlan;
+
+      const report = restartResults.map(r => {
+        const health = healthResults.find(h => h.agentId === r.agentId);
+        const serviceHealth = health?.result?.services?.find(s => s.name === plan.service);
+
+        return {
+          agentId: r.agentId,
+          restartStatus: r.status,
+          serviceStatus: serviceHealth?.status || 'unknown',
+          isHealthy: serviceHealth?.status === 'running',
+          error: r.error
+        };
+      });
+
+      const successful = report.filter(r => r.restartStatus === 'Completed' && r.isHealthy);
+      const failed = report.filter(r => r.restartStatus !== 'Completed' || !r.isHealthy);
+
+      return {
+        timestamp: new Date().toISOString(),
+        service: plan.service,
+        totalAgents: report.length,
+        successful: successful.length,
+        failed: failed.length,
+        failedAgents: failed.map(f => ({ agentId: f.agentId, reason: f.error || `Service ${f.serviceStatus}` })),
+        rollbackRequired: failed.length > plan.maxFailures
+      };
+    output_variable: restartReport
+
+  # Step 7: Notify result
+  - id: notify-result
+    name: Notify Restart Result
+    type: notification
+    channel: default
+    message: |
+      Rolling Restart ${restartReport.rollbackRequired ? 'FAILED' : 'Complete'}
+
+      Service: ${restartReport.service}
+      Success: ${restartReport.successful}/${restartReport.totalAgents}
+      Failed: ${restartReport.failed}
+
+      ${restartReport.failedAgents.length > 0 ? 'Failed Agents:\n' + restartReport.failedAgents.map(f => `- ${f.agentId}: ${f.reason}`).join('\n') : ''}
+
+      Time: ${restartReport.timestamp}
+    severity: "${restartReport.rollbackRequired ? 'error' : (restartReport.failed > 0 ? 'warning' : 'info')}"

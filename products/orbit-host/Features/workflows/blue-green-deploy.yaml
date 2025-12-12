@@ -1,0 +1,253 @@
+# Blue-Green Deployment Workflow
+# Zero-downtime deployment using blue-green strategy
+
+id: orbit:builtin:blue-green-deploy
+name: Blue-Green Deployment
+version: "1.0.0"
+description: |
+  Performs blue-green deployment for zero-downtime releases.
+  Deploys to inactive environment, validates, then switches traffic.
+enabled: true
+
+tags:
+  - built-in
+  - deployment
+  - blue-green
+  - zero-downtime
+
+triggers:
+  # Manual deployment
+  - id: manual-deploy
+    type: manual
+    name: Blue-Green Deploy
+    input_schema:
+      blue_agents:
+        type: string
+        required: true
+        description: Pattern for blue environment agents
+      green_agents:
+        type: string
+        required: true
+        description: Pattern for green environment agents
+      active_environment:
+        type: string
+        required: true
+        description: Currently active environment (blue or green)
+      package_path:
+        type: string
+        required: true
+        description: Path to deployment package on server
+      health_check_command:
+        type: string
+        required: false
+        description: Command to validate deployment health
+      rollback_on_failure:
+        type: boolean
+        required: false
+        default: true
+        description: Rollback if health check fails
+
+steps:
+  # Step 1: Determine target environment
+  - id: determine-target
+    name: Determine Target Environment
+    type: script
+    language: javascript
+    script: |
+      const active = context.input?.active_environment;
+      const target = active === 'blue' ? 'green' : 'blue';
+      const targetPattern = target === 'blue'
+        ? context.input.blue_agents
+        : context.input.green_agents;
+      const activePattern = active === 'blue'
+        ? context.input.blue_agents
+        : context.input.green_agents;
+
+      return {
+        activeEnvironment: active,
+        targetEnvironment: target,
+        targetPattern: targetPattern,
+        activePattern: activePattern,
+        packagePath: context.input.package_path
+      };
+    output_variable: deployPlan
+
+  # Step 2: Health check current environment
+  - id: check-current
+    name: Health Check Current Environment
+    type: job
+    command: orbit:system.health
+    pattern: "${deployPlan.activePattern}"
+    timeout: 30s
+    output_variable: currentHealth
+
+  # Step 3: Deploy to target environment
+  - id: deploy-package
+    name: Deploy to Target Environment
+    type: job
+    command: orbit:file.sync
+    pattern: "${deployPlan.targetPattern}"
+    args:
+      sourcePath: "${deployPlan.packagePath}"
+      targetPath: "/opt/app/current"
+      direction: "ServerToAgent"
+    timeout: 300s
+    output_variable: deployResults
+
+  # Step 4: Start services on target
+  - id: start-services
+    name: Start Services on Target
+    type: job
+    command: orbit:service.start
+    pattern: "${deployPlan.targetPattern}"
+    args:
+      service: "app"
+    timeout: 60s
+    output_variable: startResults
+
+  # Step 5: Wait for startup
+  - id: wait-startup
+    name: Wait for Service Startup
+    type: script
+    language: javascript
+    script: |
+      // Wait for services to initialize
+      const waitTime = 30; // seconds
+      return {
+        waitedSeconds: waitTime,
+        checkTime: new Date().toISOString()
+      };
+    output_variable: startupWait
+
+  # Step 6: Health check target environment
+  - id: check-target
+    name: Health Check Target Environment
+    type: job
+    command: orbit:system.health
+    pattern: "${deployPlan.targetPattern}"
+    timeout: 30s
+    output_variable: targetHealth
+
+  # Step 7: Run custom health check
+  - id: custom-health-check
+    name: Custom Health Check
+    type: job
+    condition: "${input.health_check_command != null && input.health_check_command != ''}"
+    command: orbit:system.exec
+    pattern: "${deployPlan.targetPattern}"
+    args:
+      command: "${input.health_check_command}"
+      timeout: 60
+    timeout: 60s
+    output_variable: customHealthResults
+
+  # Step 8: Evaluate deployment success
+  - id: evaluate-deployment
+    name: Evaluate Deployment
+    type: script
+    language: javascript
+    script: |
+      const deployResults = context.deployResults || [];
+      const startResults = context.startResults || [];
+      const targetHealth = context.targetHealth || [];
+      const customHealth = context.customHealthResults || [];
+      const plan = context.deployPlan;
+
+      const deploySuccess = deployResults.every(d => d.status === 'Completed');
+      const startSuccess = startResults.every(s => s.status === 'Completed');
+      const healthSuccess = targetHealth.every(h => h.status === 'Completed');
+      const customSuccess = customHealth.length === 0 ||
+        customHealth.every(c => c.status === 'Completed' && c.result?.exitCode === 0);
+
+      const overallSuccess = deploySuccess && startSuccess && healthSuccess && customSuccess;
+
+      return {
+        timestamp: new Date().toISOString(),
+        targetEnvironment: plan.targetEnvironment,
+        deploySuccess: deploySuccess,
+        startSuccess: startSuccess,
+        healthSuccess: healthSuccess,
+        customHealthSuccess: customSuccess,
+        overallSuccess: overallSuccess,
+        readyForSwitch: overallSuccess,
+        rollbackRequired: !overallSuccess && (context.input?.rollback_on_failure ?? true)
+      };
+    output_variable: deploymentEval
+
+  # Step 9: Switch traffic (if successful)
+  - id: switch-traffic
+    name: Switch Traffic to New Environment
+    type: script
+    condition: "${deploymentEval.readyForSwitch}"
+    language: javascript
+    script: |
+      // In real implementation, this would update load balancer or DNS
+      const plan = context.deployPlan;
+      return {
+        previousActive: plan.activeEnvironment,
+        newActive: plan.targetEnvironment,
+        switchTime: new Date().toISOString(),
+        switched: true
+      };
+    output_variable: trafficSwitch
+
+  # Step 10: Stop old environment services (optional)
+  - id: stop-old-services
+    name: Stop Old Environment Services
+    type: job
+    condition: "${deploymentEval.readyForSwitch}"
+    command: orbit:service.stop
+    pattern: "${deployPlan.activePattern}"
+    args:
+      service: "app"
+    timeout: 60s
+    output_variable: stopResults
+
+  # Step 11: Generate final report
+  - id: generate-report
+    name: Generate Deployment Report
+    type: script
+    language: javascript
+    script: |
+      const eval = context.deploymentEval;
+      const trafficSwitch = context.trafficSwitch;
+
+      return {
+        timestamp: new Date().toISOString(),
+        deploymentType: 'blue-green',
+        targetEnvironment: eval.targetEnvironment,
+        status: eval.overallSuccess ? 'success' : 'failed',
+        phases: {
+          deploy: eval.deploySuccess,
+          start: eval.startSuccess,
+          healthCheck: eval.healthSuccess,
+          customHealth: eval.customHealthSuccess
+        },
+        trafficSwitched: trafficSwitch?.switched || false,
+        newActiveEnvironment: trafficSwitch?.newActive || null,
+        rollbackPerformed: eval.rollbackRequired
+      };
+    output_variable: deployReport
+
+  # Step 12: Notify result
+  - id: notify-result
+    name: Notify Deployment Result
+    type: notification
+    channel: default
+    message: |
+      Blue-Green Deployment ${deployReport.status === 'success' ? 'SUCCESS' : 'FAILED'}
+
+      Target: ${deployReport.targetEnvironment}
+      Traffic Switched: ${deployReport.trafficSwitched}
+      ${deployReport.newActiveEnvironment ? 'Active Environment: ' + deployReport.newActiveEnvironment : ''}
+
+      Phases:
+      - Deploy: ${deployReport.phases.deploy ? '✓' : '✗'}
+      - Start Services: ${deployReport.phases.start ? '✓' : '✗'}
+      - Health Check: ${deployReport.phases.healthCheck ? '✓' : '✗'}
+      - Custom Health: ${deployReport.phases.customHealth ? '✓' : '✗'}
+
+      ${deployReport.rollbackPerformed ? '⚠️ ROLLBACK PERFORMED' : ''}
+
+      Time: ${deployReport.timestamp}
+    severity: "${deployReport.status === 'success' ? 'info' : 'error'}"

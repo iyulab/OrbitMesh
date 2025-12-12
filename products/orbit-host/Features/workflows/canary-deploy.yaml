@@ -1,0 +1,255 @@
+# Canary Deployment Workflow
+# Gradual rollout deployment strategy
+
+id: orbit:builtin:canary-deploy
+name: Canary Deployment
+version: "1.0.0"
+description: |
+  Deploys to a small subset of agents first (canary),
+  validates health, then gradually rolls out to all agents.
+enabled: true
+
+tags:
+  - built-in
+  - deployment
+  - canary
+  - gradual-rollout
+
+triggers:
+  # Manual canary deployment
+  - id: manual-canary
+    type: manual
+    name: Canary Deploy
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern for full deployment
+      canary_percentage:
+        type: integer
+        required: false
+        default: 10
+        description: Percentage of agents for canary phase
+      package_path:
+        type: string
+        required: true
+        description: Path to deployment package
+      health_check_command:
+        type: string
+        required: false
+        description: Command to validate deployment
+      rollout_phases:
+        type: array
+        required: false
+        default: [10, 50, 100]
+        description: Percentage rollout phases
+      phase_delay_seconds:
+        type: integer
+        required: false
+        default: 300
+        description: Delay between phases in seconds
+
+steps:
+  # Step 1: Get all target agents
+  - id: get-agents
+    name: Get Target Agents
+    type: job
+    command: orbit:system.health
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 30s
+    output_variable: allAgents
+
+  # Step 2: Plan canary rollout
+  - id: plan-rollout
+    name: Plan Canary Rollout
+    type: script
+    language: javascript
+    script: |
+      const agents = context.allAgents || [];
+      const healthyAgents = agents
+        .filter(a => a.status === 'Completed')
+        .map(a => a.agentId);
+
+      const phases = context.input?.rollout_phases || [10, 50, 100];
+      const totalAgents = healthyAgents.length;
+
+      // Shuffle agents for random selection
+      const shuffled = [...healthyAgents].sort(() => Math.random() - 0.5);
+
+      const rolloutPlan = phases.map((percentage, index) => {
+        const count = Math.ceil(totalAgents * percentage / 100);
+        return {
+          phase: index + 1,
+          percentage: percentage,
+          agentCount: Math.min(count, totalAgents),
+          agents: shuffled.slice(0, Math.min(count, totalAgents))
+        };
+      });
+
+      return {
+        totalAgents: totalAgents,
+        phases: rolloutPlan,
+        phaseDelay: context.input?.phase_delay_seconds || 300,
+        packagePath: context.input?.package_path
+      };
+    output_variable: rolloutPlan
+
+  # Step 3: Deploy canary phase (first phase)
+  - id: deploy-canary
+    name: Deploy Canary Phase
+    type: job
+    command: orbit:file.sync
+    pattern: "${rolloutPlan.phases[0].agents.join(',')}"
+    args:
+      sourcePath: "${rolloutPlan.packagePath}"
+      targetPath: "/opt/app/current"
+      direction: "ServerToAgent"
+    timeout: 300s
+    output_variable: canaryDeployResults
+
+  # Step 4: Restart canary services
+  - id: restart-canary
+    name: Restart Canary Services
+    type: job
+    command: orbit:service.restart
+    pattern: "${rolloutPlan.phases[0].agents.join(',')}"
+    args:
+      service: "app"
+    timeout: 60s
+    output_variable: canaryRestartResults
+
+  # Step 5: Wait and check canary health
+  - id: check-canary-health
+    name: Check Canary Health
+    type: job
+    command: orbit:system.health
+    pattern: "${rolloutPlan.phases[0].agents.join(',')}"
+    timeout: 30s
+    output_variable: canaryHealthResults
+
+  # Step 6: Evaluate canary phase
+  - id: evaluate-canary
+    name: Evaluate Canary Phase
+    type: script
+    language: javascript
+    script: |
+      const deployResults = context.canaryDeployResults || [];
+      const restartResults = context.canaryRestartResults || [];
+      const healthResults = context.canaryHealthResults || [];
+
+      const deploySuccess = deployResults.filter(d => d.status === 'Completed').length;
+      const restartSuccess = restartResults.filter(r => r.status === 'Completed').length;
+      const healthSuccess = healthResults.filter(h => h.status === 'Completed').length;
+
+      const total = context.rolloutPlan.phases[0].agentCount;
+      const successRate = (healthSuccess / total * 100).toFixed(1);
+
+      const canaryPassed = successRate >= 80; // 80% success threshold
+
+      return {
+        phase: 'canary',
+        totalAgents: total,
+        deploySuccess: deploySuccess,
+        restartSuccess: restartSuccess,
+        healthSuccess: healthSuccess,
+        successRate: parseFloat(successRate),
+        canaryPassed: canaryPassed,
+        proceedWithRollout: canaryPassed
+      };
+    output_variable: canaryEval
+
+  # Step 7: Full rollout (if canary passed)
+  - id: full-rollout
+    name: Full Rollout
+    type: job
+    condition: "${canaryEval.proceedWithRollout}"
+    command: orbit:file.sync
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      sourcePath: "${rolloutPlan.packagePath}"
+      targetPath: "/opt/app/current"
+      direction: "ServerToAgent"
+    timeout: 600s
+    output_variable: fullDeployResults
+
+  # Step 8: Restart all services
+  - id: restart-all
+    name: Restart All Services
+    type: job
+    condition: "${canaryEval.proceedWithRollout}"
+    command: orbit:service.restart
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      service: "app"
+    timeout: 120s
+    output_variable: fullRestartResults
+
+  # Step 9: Final health check
+  - id: final-health-check
+    name: Final Health Check
+    type: job
+    condition: "${canaryEval.proceedWithRollout}"
+    command: orbit:system.health
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 60s
+    output_variable: finalHealthResults
+
+  # Step 10: Generate final report
+  - id: generate-report
+    name: Generate Deployment Report
+    type: script
+    language: javascript
+    script: |
+      const canaryEval = context.canaryEval;
+      const fullDeploy = context.fullDeployResults || [];
+      const fullRestart = context.fullRestartResults || [];
+      const finalHealth = context.finalHealthResults || [];
+      const plan = context.rolloutPlan;
+
+      let status = 'failed';
+      let finalSuccessRate = 0;
+
+      if (canaryEval.proceedWithRollout) {
+        const finalHealthy = finalHealth.filter(h => h.status === 'Completed').length;
+        finalSuccessRate = (finalHealthy / plan.totalAgents * 100).toFixed(1);
+        status = finalHealthy >= plan.totalAgents * 0.9 ? 'success' : 'partial';
+      }
+
+      return {
+        timestamp: new Date().toISOString(),
+        deploymentType: 'canary',
+        totalAgents: plan.totalAgents,
+        status: status,
+        canary: {
+          agents: canaryEval.totalAgents,
+          successRate: canaryEval.successRate,
+          passed: canaryEval.canaryPassed
+        },
+        fullRollout: {
+          performed: canaryEval.proceedWithRollout,
+          successRate: parseFloat(finalSuccessRate)
+        }
+      };
+    output_variable: deployReport
+
+  # Step 11: Notify result
+  - id: notify-result
+    name: Notify Deployment Result
+    type: notification
+    channel: default
+    message: |
+      Canary Deployment ${deployReport.status.toUpperCase()}
+
+      Total Agents: ${deployReport.totalAgents}
+
+      Canary Phase:
+      - Agents: ${deployReport.canary.agents}
+      - Success Rate: ${deployReport.canary.successRate}%
+      - Passed: ${deployReport.canary.passed ? 'Yes' : 'No'}
+
+      ${deployReport.fullRollout.performed ? `Full Rollout:
+      - Success Rate: ${deployReport.fullRollout.successRate}%` : 'Full rollout not performed due to canary failure'}
+
+      Time: ${deployReport.timestamp}
+    severity: "${deployReport.status === 'success' ? 'info' : (deployReport.status === 'partial' ? 'warning' : 'error')}"

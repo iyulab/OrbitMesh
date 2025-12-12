@@ -1,0 +1,127 @@
+# Log Collection Workflow
+# Collects and aggregates logs from agents
+
+id: orbit:builtin:log-collection
+name: Log Collection
+version: "1.0.0"
+description: |
+  Collects log files from agents based on patterns and time ranges.
+  Supports filtering and aggregation of collected logs.
+enabled: true
+
+tags:
+  - built-in
+  - data-collection
+  - logs
+  - troubleshooting
+
+triggers:
+  # Manual log collection
+  - id: manual-logs
+    type: manual
+    name: Collect Logs
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to collect logs from
+      log_path:
+        type: string
+        required: true
+        description: Path pattern for log files (e.g., /var/log/*.log)
+      lines:
+        type: integer
+        required: false
+        default: 100
+        description: Number of lines to collect from each log
+      since:
+        type: string
+        required: false
+        description: Collect logs since this time (e.g., "1h", "30m", "2024-01-01")
+
+steps:
+  # Step 1: List matching log files
+  - id: list-logs
+    name: List Log Files
+    type: job
+    command: orbit:file.list
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      path: "${input.log_path}"
+    timeout: 30s
+    output_variable: logFiles
+
+  # Step 2: Collect log content
+  - id: collect-logs
+    name: Collect Log Content
+    type: script
+    language: javascript
+    script: |
+      // This step prepares the collection parameters
+      const logFiles = context.logFiles || [];
+      const lines = context.input?.lines || 100;
+
+      const collections = logFiles.flatMap(agent => {
+        const files = agent.result?.files || [];
+        return files.map(file => ({
+          agentId: agent.agentId,
+          file: file.path,
+          lines: lines
+        }));
+      });
+
+      return {
+        totalFiles: collections.length,
+        collections: collections
+      };
+    output_variable: collectionPlan
+
+  # Step 3: Execute file reads
+  - id: read-logs
+    name: Read Log Files
+    type: job
+    command: orbit:file.read
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      path: "${collectionPlan.collections[0].file}"
+      lines: "${input.lines ?? 100}"
+    timeout: 60s
+    output_variable: logContent
+
+  # Step 4: Aggregate results
+  - id: aggregate-logs
+    name: Aggregate Log Results
+    type: script
+    language: javascript
+    script: |
+      const content = context.logContent || [];
+      const timestamp = new Date().toISOString();
+
+      const aggregated = content.map(c => ({
+        agentId: c.agentId,
+        file: c.args?.path,
+        status: c.status,
+        lineCount: c.result?.content?.split('\n').length || 0,
+        preview: c.result?.content?.substring(0, 500),
+        collectedAt: timestamp
+      }));
+
+      return {
+        timestamp: timestamp,
+        totalAgents: [...new Set(aggregated.map(a => a.agentId))].length,
+        totalFiles: aggregated.length,
+        successfulReads: aggregated.filter(a => a.status === 'Completed').length,
+        logs: aggregated
+      };
+    output_variable: logReport
+
+  # Step 5: Log summary
+  - id: log-summary
+    name: Log Collection Summary
+    type: script
+    language: javascript
+    script: |
+      const report = context.logReport;
+      console.log(`Log collection complete: ${report.successfulReads}/${report.totalFiles} files from ${report.totalAgents} agents`);
+      return report;

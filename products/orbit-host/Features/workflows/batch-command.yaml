@@ -1,0 +1,145 @@
+# Batch Command Workflow
+# Execute multiple commands in sequence on agents
+
+id: orbit:builtin:batch-command
+name: Batch Command Execution
+version: "1.0.0"
+description: |
+  Executes a series of commands in sequence on target agents.
+  Supports conditional execution and rollback on failure.
+enabled: true
+
+tags:
+  - built-in
+  - script-execution
+  - batch
+  - automation
+
+triggers:
+  # Manual batch execution
+  - id: manual-batch
+    type: manual
+    name: Execute Batch Commands
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to execute on
+      commands:
+        type: array
+        required: true
+        description: List of commands to execute in sequence
+      stop_on_error:
+        type: boolean
+        required: false
+        default: true
+        description: Stop execution on first error
+      timeout_per_command:
+        type: integer
+        required: false
+        default: 300
+        description: Timeout per command in seconds
+
+steps:
+  # Step 1: Validate commands
+  - id: validate-commands
+    name: Validate Commands
+    type: script
+    language: javascript
+    script: |
+      const commands = context.input?.commands || [];
+      if (commands.length === 0) {
+        throw new Error('At least one command is required');
+      }
+
+      const validated = commands.map((cmd, index) => ({
+        index: index,
+        command: typeof cmd === 'string' ? cmd : cmd.command,
+        name: typeof cmd === 'string' ? `Command ${index + 1}` : (cmd.name || `Command ${index + 1}`),
+        continueOnError: typeof cmd === 'object' ? cmd.continueOnError : false
+      }));
+
+      return {
+        commands: validated,
+        totalCommands: validated.length,
+        stopOnError: context.input?.stop_on_error ?? true
+      };
+    output_variable: batchPlan
+
+  # Step 2: Execute first command
+  - id: execute-batch
+    name: Execute Batch Commands
+    type: job
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "${batchPlan.commands.map(c => c.command).join(' && ')}"
+      timeout: "${(input.timeout_per_command ?? 300) * batchPlan.totalCommands}"
+    timeout: "${(input.timeout_per_command ?? 300) * batchPlan.totalCommands}s"
+    output_variable: batchResults
+
+  # Step 3: Process results
+  - id: process-results
+    name: Process Batch Results
+    type: script
+    language: javascript
+    script: |
+      const results = context.batchResults || [];
+      const plan = context.batchPlan;
+      const timestamp = new Date().toISOString();
+
+      const processed = results.map(r => ({
+        agentId: r.agentId,
+        status: r.status,
+        exitCode: r.result?.exitCode,
+        stdout: r.result?.stdout,
+        stderr: r.result?.stderr,
+        executionTime: r.result?.executionTime,
+        allCommandsSucceeded: r.status === 'Completed' && r.result?.exitCode === 0
+      }));
+
+      const successful = processed.filter(p => p.allCommandsSucceeded);
+      const failed = processed.filter(p => !p.allCommandsSucceeded);
+
+      return {
+        timestamp: timestamp,
+        totalCommands: plan.totalCommands,
+        totalAgents: results.length,
+        fullySuccessful: successful.length,
+        partialOrFailed: failed.length,
+        results: processed,
+        summary: {
+          commands: plan.commands.map(c => c.name),
+          successRate: (successful.length / results.length * 100).toFixed(1) + '%'
+        }
+      };
+    output_variable: batchReport
+
+  # Step 4: Log summary
+  - id: log-summary
+    name: Log Batch Summary
+    type: script
+    language: javascript
+    script: |
+      const report = context.batchReport;
+      console.log(`Batch execution complete: ${report.fullySuccessful}/${report.totalAgents} agents succeeded (${report.totalCommands} commands)`);
+      return report;
+
+  # Step 5: Alert on failures
+  - id: alert-failures
+    name: Alert on Failures
+    type: notification
+    condition: "${batchReport.partialOrFailed > 0}"
+    channel: default
+    message: |
+      Batch Command Execution Report
+
+      Commands Executed: ${batchReport.totalCommands}
+      Success Rate: ${batchReport.summary.successRate}
+
+      Fully Successful: ${batchReport.fullySuccessful}
+      Partial/Failed: ${batchReport.partialOrFailed}
+
+      Time: ${batchReport.timestamp}
+    severity: warning

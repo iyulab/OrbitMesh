@@ -1,0 +1,206 @@
+# Cleanup Temporary Files Workflow
+# Clean up temporary files and directories on agents
+
+id: orbit:builtin:cleanup-temp
+name: Cleanup Temporary Files
+version: "1.0.0"
+description: |
+  Cleans up temporary files, caches, and old logs on agents
+  to free up disk space and maintain system health.
+enabled: true
+
+tags:
+  - built-in
+  - maintenance
+  - cleanup
+  - disk-space
+
+triggers:
+  # Scheduled cleanup
+  - id: scheduled-cleanup
+    type: schedule
+    name: Scheduled Cleanup
+    interval: 24h
+    max_concurrent: 5
+
+  # Manual cleanup
+  - id: manual-cleanup
+    type: manual
+    name: Manual Cleanup
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to clean
+      paths:
+        type: array
+        required: false
+        default: ["/tmp", "/var/tmp", "/var/cache"]
+        description: Paths to clean
+      older_than_days:
+        type: integer
+        required: false
+        default: 7
+        description: Delete files older than this many days
+      dry_run:
+        type: boolean
+        required: false
+        default: false
+        description: Preview cleanup without deleting
+
+steps:
+  # Step 1: Get disk usage before cleanup
+  - id: disk-before
+    name: Check Disk Before Cleanup
+    type: job
+    command: orbit:system.metrics
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 30s
+    output_variable: diskBefore
+
+  # Step 2: Find files to clean
+  - id: find-files
+    name: Find Files to Clean
+    type: job
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "find ${(input.paths ?? ['/tmp', '/var/tmp']).join(' ')} -type f -mtime +${input.older_than_days ?? 7} 2>/dev/null | head -1000"
+      timeout: 60
+    timeout: 60s
+    output_variable: filesToClean
+
+  # Step 3: Calculate cleanup size
+  - id: calculate-size
+    name: Calculate Cleanup Size
+    type: script
+    language: javascript
+    script: |
+      const results = context.filesToClean || [];
+      const isDryRun = context.input?.dry_run ?? false;
+
+      const analysis = results.map(r => {
+        const stdout = r.result?.stdout || '';
+        const files = stdout.split('\n').filter(f => f.trim());
+
+        return {
+          agentId: r.agentId,
+          status: r.status,
+          fileCount: files.length,
+          files: files.slice(0, 50), // Limit for display
+          truncated: files.length > 50
+        };
+      });
+
+      const totalFiles = analysis.reduce((sum, a) => sum + a.fileCount, 0);
+
+      return {
+        isDryRun: isDryRun,
+        totalFiles: totalFiles,
+        agentDetails: analysis
+      };
+    output_variable: cleanupPlan
+
+  # Step 4: Execute cleanup (if not dry run)
+  - id: execute-cleanup
+    name: Execute Cleanup
+    type: job
+    condition: "${!(input.dry_run ?? false)}"
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "find ${(input.paths ?? ['/tmp', '/var/tmp']).join(' ')} -type f -mtime +${input.older_than_days ?? 7} -delete 2>/dev/null; echo 'Cleanup complete'"
+      timeout: 300
+    timeout: 300s
+    output_variable: cleanupResults
+
+  # Step 5: Clean empty directories
+  - id: clean-empty-dirs
+    name: Clean Empty Directories
+    type: job
+    condition: "${!(input.dry_run ?? false)}"
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "find ${(input.paths ?? ['/tmp', '/var/tmp']).join(' ')} -type d -empty -delete 2>/dev/null; echo 'Done'"
+      timeout: 60
+    timeout: 60s
+    output_variable: dirCleanupResults
+
+  # Step 6: Get disk usage after cleanup
+  - id: disk-after
+    name: Check Disk After Cleanup
+    type: job
+    condition: "${!(input.dry_run ?? false)}"
+    command: orbit:system.metrics
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 30s
+    output_variable: diskAfter
+
+  # Step 7: Generate report
+  - id: generate-report
+    name: Generate Cleanup Report
+    type: script
+    language: javascript
+    script: |
+      const cleanupPlan = context.cleanupPlan;
+      const diskBefore = context.diskBefore || [];
+      const diskAfter = context.diskAfter || [];
+      const isDryRun = cleanupPlan.isDryRun;
+
+      const report = diskBefore.map(before => {
+        const after = diskAfter.find(a => a.agentId === before.agentId);
+        const plan = cleanupPlan.agentDetails.find(p => p.agentId === before.agentId);
+
+        const usedBefore = before.result?.usedDisk || 0;
+        const usedAfter = after?.result?.usedDisk || usedBefore;
+        const freedBytes = usedBefore - usedAfter;
+
+        return {
+          agentId: before.agentId,
+          filesCleaned: plan?.fileCount || 0,
+          diskBefore: usedBefore,
+          diskAfter: usedAfter,
+          freedBytes: freedBytes,
+          freedFormatted: formatBytes(freedBytes)
+        };
+      });
+
+      const totalFreed = report.reduce((sum, r) => sum + r.freedBytes, 0);
+      const totalFiles = report.reduce((sum, r) => sum + r.filesCleaned, 0);
+
+      return {
+        timestamp: new Date().toISOString(),
+        isDryRun: isDryRun,
+        totalAgents: report.length,
+        totalFilesIdentified: cleanupPlan.totalFiles,
+        totalFilesCleaned: isDryRun ? 0 : totalFiles,
+        totalFreedBytes: totalFreed,
+        totalFreedFormatted: formatBytes(totalFreed),
+        details: report
+      };
+
+      function formatBytes(bytes) {
+        if (bytes <= 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+      }
+    output_variable: cleanupReport
+
+  # Step 8: Notify result
+  - id: notify-result
+    name: Notify Cleanup Result
+    type: notification
+    channel: default
+    message: |
+      ${cleanupReport.isDryRun ? '[DRY RUN] ' : ''}Cleanup Complete
+
+      Agents: ${cleanupReport.totalAgents}
+      Files ${cleanupReport.isDryRun ? 'Identified' : 'Cleaned'}: ${cleanupReport.isDryRun ? cleanupReport.totalFilesIdentified : cleanupReport.totalFilesCleaned}
+      ${cleanupReport.isDryRun ? '' : 'Space Freed: ' + cleanupReport.totalFreedFormatted}
+
+      Time: ${cleanupReport.timestamp}
+    severity: info

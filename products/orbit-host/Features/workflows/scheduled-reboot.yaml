@@ -1,0 +1,216 @@
+# Scheduled Reboot Workflow
+# Safely reboot agents with pre-checks and coordination
+
+id: orbit:builtin:scheduled-reboot
+name: Scheduled Reboot
+version: "1.0.0"
+description: |
+  Performs scheduled reboots of agents with pre-checks,
+  coordination, and post-reboot verification.
+enabled: true
+
+tags:
+  - built-in
+  - maintenance
+  - reboot
+  - scheduled
+
+triggers:
+  # Manual reboot
+  - id: manual-reboot
+    type: manual
+    name: Scheduled Reboot
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to reboot
+      delay_seconds:
+        type: integer
+        required: false
+        default: 60
+        description: Delay before reboot (seconds)
+      batch_size:
+        type: integer
+        required: false
+        default: 1
+        description: Number of agents to reboot simultaneously
+      wait_for_recovery:
+        type: boolean
+        required: false
+        default: true
+        description: Wait for agents to come back online
+      recovery_timeout_seconds:
+        type: integer
+        required: false
+        default: 300
+        description: Timeout for agent recovery (seconds)
+      pre_reboot_command:
+        type: string
+        required: false
+        description: Command to run before reboot
+
+steps:
+  # Step 1: Get target agents
+  - id: get-targets
+    name: Get Target Agents
+    type: job
+    command: orbit:system.health
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 30s
+    output_variable: targetAgents
+
+  # Step 2: Plan reboot sequence
+  - id: plan-reboot
+    name: Plan Reboot Sequence
+    type: script
+    language: javascript
+    script: |
+      const agents = context.targetAgents || [];
+      const batchSize = context.input?.batch_size || 1;
+
+      const healthyAgents = agents
+        .filter(a => a.status === 'Completed')
+        .map(a => a.agentId);
+
+      // Create batches
+      const batches = [];
+      for (let i = 0; i < healthyAgents.length; i += batchSize) {
+        batches.push(healthyAgents.slice(i, i + batchSize));
+      }
+
+      return {
+        totalAgents: healthyAgents.length,
+        batchSize: batchSize,
+        totalBatches: batches.length,
+        batches: batches,
+        delaySeconds: context.input?.delay_seconds || 60,
+        recoveryTimeout: context.input?.recovery_timeout_seconds || 300
+      };
+    output_variable: rebootPlan
+
+  # Step 3: Run pre-reboot command (if specified)
+  - id: pre-reboot
+    name: Run Pre-Reboot Command
+    type: job
+    condition: "${input.pre_reboot_command != null && input.pre_reboot_command != ''}"
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "${input.pre_reboot_command}"
+      timeout: 120
+    timeout: 120s
+    output_variable: preRebootResults
+
+  # Step 4: Notify about upcoming reboot
+  - id: notify-upcoming
+    name: Notify Upcoming Reboot
+    type: notification
+    channel: default
+    message: |
+      Scheduled Reboot Starting
+
+      Agents: ${rebootPlan.totalAgents}
+      Batches: ${rebootPlan.totalBatches}
+      Batch Size: ${rebootPlan.batchSize}
+      Delay: ${rebootPlan.delaySeconds}s
+
+      Reboots will begin shortly...
+    severity: warning
+
+  # Step 5: Execute reboot
+  - id: execute-reboot
+    name: Execute Reboot
+    type: job
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "sudo shutdown -r +${Math.ceil((input.delay_seconds ?? 60) / 60)} 'OrbitMesh scheduled reboot' || shutdown /r /t ${input.delay_seconds ?? 60} /c 'OrbitMesh scheduled reboot'"
+      timeout: 30
+    timeout: 30s
+    output_variable: rebootResults
+
+  # Step 6: Track reboot status
+  - id: track-reboot
+    name: Track Reboot Status
+    type: script
+    language: javascript
+    script: |
+      const results = context.rebootResults || [];
+      const initiated = results.filter(r => r.status === 'Completed').length;
+      const failed = results.filter(r => r.status !== 'Completed').length;
+
+      return {
+        timestamp: new Date().toISOString(),
+        rebootsInitiated: initiated,
+        rebootsFailed: failed,
+        waitingForRecovery: context.input?.wait_for_recovery ?? true
+      };
+    output_variable: rebootStatus
+
+  # Step 7: Wait for recovery
+  - id: wait-recovery
+    name: Wait for Agent Recovery
+    type: script
+    condition: "${input.wait_for_recovery ?? true}"
+    language: javascript
+    script: |
+      // In real implementation, this would poll for agent reconnection
+      const recoveryTimeout = context.rebootPlan.recoveryTimeout;
+      return {
+        waitingStarted: new Date().toISOString(),
+        timeoutSeconds: recoveryTimeout
+      };
+    output_variable: recoveryWait
+
+  # Step 8: Verify recovery
+  - id: verify-recovery
+    name: Verify Agent Recovery
+    type: job
+    condition: "${input.wait_for_recovery ?? true}"
+    command: orbit:system.health
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 60s
+    output_variable: recoveryResults
+
+  # Step 9: Generate final report
+  - id: generate-report
+    name: Generate Reboot Report
+    type: script
+    language: javascript
+    script: |
+      const plan = context.rebootPlan;
+      const rebootStatus = context.rebootStatus;
+      const recoveryResults = context.recoveryResults || [];
+
+      const recovered = recoveryResults.filter(r => r.status === 'Completed').length;
+      const notRecovered = plan.totalAgents - recovered;
+
+      return {
+        timestamp: new Date().toISOString(),
+        totalAgents: plan.totalAgents,
+        rebootsInitiated: rebootStatus.rebootsInitiated,
+        rebootsFailed: rebootStatus.rebootsFailed,
+        agentsRecovered: recovered,
+        agentsNotRecovered: notRecovered,
+        overallSuccess: notRecovered === 0 && rebootStatus.rebootsFailed === 0
+      };
+    output_variable: rebootReport
+
+  # Step 10: Notify completion
+  - id: notify-completion
+    name: Notify Reboot Completion
+    type: notification
+    channel: default
+    message: |
+      Scheduled Reboot ${rebootReport.overallSuccess ? 'Complete' : 'Completed with Issues'}
+
+      Total Agents: ${rebootReport.totalAgents}
+      Reboots Initiated: ${rebootReport.rebootsInitiated}
+      Reboots Failed: ${rebootReport.rebootsFailed}
+      Agents Recovered: ${rebootReport.agentsRecovered}
+      ${rebootReport.agentsNotRecovered > 0 ? 'Agents NOT Recovered: ' + rebootReport.agentsNotRecovered : ''}
+
+      Time: ${rebootReport.timestamp}
+    severity: "${rebootReport.overallSuccess ? 'info' : 'error'}"

@@ -1,5 +1,6 @@
 using System.Globalization;
 using OrbitMesh.Host.Extensions;
+using OrbitMesh.Host.Features;
 using OrbitMesh.Storage.Sqlite.Extensions;
 using Serilog;
 
@@ -29,6 +30,10 @@ try
         });
 
         server.AddWorkflows();
+
+        // Add built-in features based on configuration
+        // Reads from OrbitMesh:Features section in appsettings.json
+        server.AddBuiltInFeatures(builder.Configuration);
 
         server.ConfigureSignalR(hub =>
         {

@@ -1,0 +1,123 @@
+# Product-level Two-Way File Sync Workflow
+# Extends SDK file-sync template with bidirectional synchronization
+
+id: orbit:builtin:file-sync-twoway
+name: Two-Way File Synchronization
+version: "1.0.0"
+description: |
+  Bidirectional file synchronization between server and agents.
+  Changes on either side are automatically propagated.
+enabled: true
+
+tags:
+  - built-in
+  - sync
+  - file
+  - twoway
+
+triggers:
+  # Manual trigger for on-demand sync
+  - id: manual-sync
+    type: manual
+    name: Manual Two-Way Sync
+    input_schema:
+      server_path:
+        type: string
+        required: true
+        description: Server-side directory path
+      agent_path:
+        type: string
+        required: true
+        description: Agent-side directory path
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent selection pattern
+      delete_orphans:
+        type: boolean
+        required: false
+        default: false
+        description: Delete files not present on source
+
+  # File watch trigger for real-time sync (server-side changes)
+  - id: server-file-watch
+    type: file_watch
+    name: Server File Watch
+    watch_path: "${config.server_path}"
+    filter: "*"
+    include_subdirectories: true
+    change_types:
+      - Created
+      - Modified
+      - Deleted
+    debounce_ms: 500
+    input_mapping:
+      changed_file: "${event.path}"
+      change_type: "${event.type}"
+
+steps:
+  # Step 1: Get server file manifest
+  - id: get-server-manifest
+    name: Get Server Manifest
+    type: http
+    method: GET
+    url: "${server_url}/api/files/manifest?path=${input.server_path}"
+    output_variable: serverManifest
+
+  # Step 2: Get agent file manifest
+  - id: get-agent-manifest
+    name: Get Agent File Manifest
+    type: job
+    command: orbit:file.manifest
+    pattern: "${input.agent_pattern}"
+    payload:
+      path: "${input.agent_path}"
+    output_variable: agentManifest
+
+  # Step 3: Compare and sync (server to agents)
+  - id: sync-to-agents
+    name: Sync Server to Agents
+    type: job
+    command: orbit:file.sync
+    pattern: "${input.agent_pattern}"
+    payload:
+      source: "${server_url}/api/files"
+      sourcePath: "${input.server_path}"
+      destination: "${input.agent_path}"
+      deleteOrphans: "${input.delete_orphans}"
+      manifest: "${serverManifest}"
+    max_retries: 3
+    retry_delay: 5s
+    output_variable: syncToAgentsResult
+
+  # Step 4: Sync back (agents to server) - for files only on agents
+  - id: sync-to-server
+    name: Sync Agents to Server
+    type: job
+    command: orbit:file.upload
+    pattern: "${input.agent_pattern}"
+    payload:
+      sourcePath: "${input.agent_path}"
+      destinationUrl: "${server_url}/api/files/upload"
+      destinationPath: "${input.server_path}"
+      onlyNewer: true
+    condition: "${agentManifest.hasUniqueFiles}"
+    output_variable: syncToServerResult
+
+  # Step 5: Report sync summary
+  - id: report-summary
+    name: Report Sync Summary
+    type: script
+    language: javascript
+    script: |
+      const toAgents = context.syncToAgentsResult || { synced: 0 };
+      const toServer = context.syncToServerResult || { uploaded: 0 };
+      return {
+        summary: {
+          serverToAgents: toAgents.synced,
+          agentsToServer: toServer.uploaded,
+          timestamp: new Date().toISOString()
+        }
+      };
+    output_variable: syncSummary

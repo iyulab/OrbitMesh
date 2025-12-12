@@ -1,0 +1,175 @@
+# Log Rotation Workflow
+# Rotate and compress log files on agents
+
+id: orbit:builtin:log-rotate
+name: Log Rotation
+version: "1.0.0"
+description: |
+  Rotates log files on agents, compressing old logs
+  and removing logs older than retention period.
+enabled: true
+
+tags:
+  - built-in
+  - maintenance
+  - logs
+  - rotation
+
+triggers:
+  # Scheduled log rotation
+  - id: scheduled-rotate
+    type: schedule
+    name: Scheduled Log Rotation
+    interval: 24h
+    max_concurrent: 5
+
+  # Manual log rotation
+  - id: manual-rotate
+    type: manual
+    name: Manual Log Rotation
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern for log rotation
+      log_paths:
+        type: array
+        required: false
+        default: ["/var/log/*.log", "/opt/app/logs/*.log"]
+        description: Log file patterns to rotate
+      max_size_mb:
+        type: integer
+        required: false
+        default: 100
+        description: Rotate logs larger than this size (MB)
+      keep_rotations:
+        type: integer
+        required: false
+        default: 5
+        description: Number of rotated logs to keep
+      compress:
+        type: boolean
+        required: false
+        default: true
+        description: Compress rotated logs
+
+steps:
+  # Step 1: Find logs to rotate
+  - id: find-logs
+    name: Find Logs to Rotate
+    type: job
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "find ${(input.log_paths ?? ['/var/log/*.log']).map(p => p.replace('*', '\\*')).join(' ')} -type f -size +${input.max_size_mb ?? 100}M 2>/dev/null || echo ''"
+      timeout: 60
+    timeout: 60s
+    output_variable: logsToRotate
+
+  # Step 2: Analyze logs
+  - id: analyze-logs
+    name: Analyze Logs to Rotate
+    type: script
+    language: javascript
+    script: |
+      const results = context.logsToRotate || [];
+
+      const analysis = results.map(r => {
+        const stdout = r.result?.stdout || '';
+        const logs = stdout.split('\n').filter(l => l.trim() && !l.includes('find:'));
+
+        return {
+          agentId: r.agentId,
+          status: r.status,
+          logsFound: logs.length,
+          logFiles: logs
+        };
+      });
+
+      const totalLogs = analysis.reduce((sum, a) => sum + a.logsFound, 0);
+
+      return {
+        totalLogs: totalLogs,
+        details: analysis,
+        needsRotation: totalLogs > 0
+      };
+    output_variable: rotationPlan
+
+  # Step 3: Rotate logs
+  - id: rotate-logs
+    name: Rotate Logs
+    type: job
+    condition: "${rotationPlan.needsRotation}"
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: |
+        for log in $(find ${(input.log_paths ?? ['/var/log/*.log']).join(' ')} -type f -size +${input.max_size_mb ?? 100}M 2>/dev/null); do
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          mv "$log" "${log}.${timestamp}"
+          touch "$log"
+          ${input.compress ?? true ? 'gzip "${log}.${timestamp}"' : 'true'}
+        done
+        echo "Rotation complete"
+      timeout: 300
+    timeout: 300s
+    output_variable: rotationResults
+
+  # Step 4: Clean old rotated logs
+  - id: clean-old-logs
+    name: Clean Old Rotated Logs
+    type: job
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: |
+        for pattern in ${(input.log_paths ?? ['/var/log/*.log']).join(' ')}; do
+          dir=$(dirname "$pattern")
+          base=$(basename "$pattern" .log)
+          ls -t "$dir/$base".log.* 2>/dev/null | tail -n +${(input.keep_rotations ?? 5) + 1} | xargs rm -f 2>/dev/null
+        done
+        echo "Cleanup complete"
+      timeout: 120
+    timeout: 120s
+    output_variable: cleanupResults
+
+  # Step 5: Generate report
+  - id: generate-report
+    name: Generate Rotation Report
+    type: script
+    language: javascript
+    script: |
+      const plan = context.rotationPlan;
+      const rotationResults = context.rotationResults || [];
+
+      const successful = rotationResults.filter(r =>
+        r.status === 'Completed' && r.result?.exitCode === 0
+      ).length;
+
+      return {
+        timestamp: new Date().toISOString(),
+        totalAgents: plan.details.length,
+        logsRotated: plan.totalLogs,
+        agentsSuccessful: successful,
+        agentsFailed: plan.details.length - successful,
+        compressed: context.input?.compress ?? true,
+        keepRotations: context.input?.keep_rotations ?? 5
+      };
+    output_variable: rotationReport
+
+  # Step 6: Notify result
+  - id: notify-result
+    name: Notify Rotation Result
+    type: notification
+    channel: default
+    message: |
+      Log Rotation Complete
+
+      Agents: ${rotationReport.agentsSuccessful}/${rotationReport.totalAgents} successful
+      Logs Rotated: ${rotationReport.logsRotated}
+      Compressed: ${rotationReport.compressed ? 'Yes' : 'No'}
+      Kept Rotations: ${rotationReport.keepRotations}
+
+      Time: ${rotationReport.timestamp}
+    severity: "${rotationReport.agentsFailed > 0 ? 'warning' : 'info'}"

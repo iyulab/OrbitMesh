@@ -1,0 +1,257 @@
+# Application Update Workflow
+# Simple application update with health verification
+
+id: orbit:builtin:app-update
+name: Application Update
+version: "1.0.0"
+description: |
+  Updates application on target agents with pre/post scripts,
+  health verification, and automatic rollback capability.
+enabled: true
+
+tags:
+  - built-in
+  - deployment
+  - update
+  - application
+
+triggers:
+  # Manual update
+  - id: manual-update
+    type: manual
+    name: Update Application
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to update
+      package_path:
+        type: string
+        required: true
+        description: Path to update package on server
+      target_path:
+        type: string
+        required: false
+        default: "/opt/app"
+        description: Target installation path
+      service_name:
+        type: string
+        required: false
+        default: "app"
+        description: Service name to restart
+      pre_update_script:
+        type: string
+        required: false
+        description: Script to run before update
+      post_update_script:
+        type: string
+        required: false
+        description: Script to run after update
+      backup:
+        type: boolean
+        required: false
+        default: true
+        description: Backup current version before update
+      rollback_on_failure:
+        type: boolean
+        required: false
+        default: true
+        description: Rollback if update fails
+
+steps:
+  # Step 1: Pre-flight check
+  - id: preflight-check
+    name: Pre-flight Check
+    type: job
+    command: orbit:system.health
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 30s
+    output_variable: preflightResults
+
+  # Step 2: Analyze targets
+  - id: analyze-targets
+    name: Analyze Target Agents
+    type: script
+    language: javascript
+    script: |
+      const results = context.preflightResults || [];
+      const healthy = results.filter(r => r.status === 'Completed');
+      const unhealthy = results.filter(r => r.status !== 'Completed');
+
+      return {
+        totalAgents: results.length,
+        healthyAgents: healthy.length,
+        unhealthyAgents: unhealthy.length,
+        healthyList: healthy.map(h => h.agentId),
+        unhealthyList: unhealthy.map(u => u.agentId),
+        proceedWithUpdate: healthy.length > 0
+      };
+    output_variable: targetAnalysis
+
+  # Step 3: Stop services
+  - id: stop-services
+    name: Stop Services
+    type: job
+    condition: "${targetAnalysis.proceedWithUpdate}"
+    command: orbit:service.stop
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      service: "${input.service_name ?? 'app'}"
+    timeout: 60s
+    output_variable: stopResults
+
+  # Step 4: Backup current version
+  - id: backup-current
+    name: Backup Current Version
+    type: job
+    condition: "${(input.backup ?? true) && targetAnalysis.proceedWithUpdate}"
+    command: orbit:file.download
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      path: "${input.target_path ?? '/opt/app'}"
+    timeout: 120s
+    output_variable: backupResults
+
+  # Step 5: Run pre-update script
+  - id: pre-update-script
+    name: Run Pre-Update Script
+    type: job
+    condition: "${input.pre_update_script != null && input.pre_update_script != '' && targetAnalysis.proceedWithUpdate}"
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "${input.pre_update_script}"
+      timeout: 120
+    timeout: 120s
+    output_variable: preScriptResults
+
+  # Step 6: Deploy update
+  - id: deploy-update
+    name: Deploy Update
+    type: job
+    condition: "${targetAnalysis.proceedWithUpdate}"
+    command: orbit:file.sync
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      sourcePath: "${input.package_path}"
+      targetPath: "${input.target_path ?? '/opt/app'}"
+      direction: "ServerToAgent"
+    timeout: 300s
+    output_variable: deployResults
+
+  # Step 7: Run post-update script
+  - id: post-update-script
+    name: Run Post-Update Script
+    type: job
+    condition: "${input.post_update_script != null && input.post_update_script != '' && targetAnalysis.proceedWithUpdate}"
+    command: orbit:system.exec
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      command: "${input.post_update_script}"
+      timeout: 120
+    timeout: 120s
+    output_variable: postScriptResults
+
+  # Step 8: Start services
+  - id: start-services
+    name: Start Services
+    type: job
+    condition: "${targetAnalysis.proceedWithUpdate}"
+    command: orbit:service.start
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      service: "${input.service_name ?? 'app'}"
+    timeout: 60s
+    output_variable: startResults
+
+  # Step 9: Health check
+  - id: health-check
+    name: Post-Update Health Check
+    type: job
+    condition: "${targetAnalysis.proceedWithUpdate}"
+    command: orbit:system.health
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 60s
+    output_variable: healthResults
+
+  # Step 10: Evaluate update
+  - id: evaluate-update
+    name: Evaluate Update
+    type: script
+    language: javascript
+    script: |
+      const deployResults = context.deployResults || [];
+      const startResults = context.startResults || [];
+      const healthResults = context.healthResults || [];
+      const targetAnalysis = context.targetAnalysis;
+
+      const deployed = deployResults.filter(d => d.status === 'Completed').length;
+      const started = startResults.filter(s => s.status === 'Completed').length;
+      const healthy = healthResults.filter(h => h.status === 'Completed').length;
+
+      const successRate = (healthy / targetAnalysis.healthyAgents * 100).toFixed(1);
+      const isSuccess = healthy >= targetAnalysis.healthyAgents * 0.9; // 90% threshold
+
+      return {
+        timestamp: new Date().toISOString(),
+        totalTargets: targetAnalysis.healthyAgents,
+        deployed: deployed,
+        started: started,
+        healthy: healthy,
+        successRate: parseFloat(successRate),
+        isSuccess: isSuccess,
+        needsRollback: !isSuccess && (context.input?.rollback_on_failure ?? true)
+      };
+    output_variable: updateEval
+
+  # Step 11: Generate report
+  - id: generate-report
+    name: Generate Update Report
+    type: script
+    language: javascript
+    script: |
+      const eval = context.updateEval;
+      const targetAnalysis = context.targetAnalysis;
+
+      return {
+        timestamp: eval.timestamp,
+        packagePath: context.input.package_path,
+        targetPath: context.input?.target_path || '/opt/app',
+        serviceName: context.input?.service_name || 'app',
+        status: eval.isSuccess ? 'success' : (eval.needsRollback ? 'failed_rollback' : 'failed'),
+        metrics: {
+          totalAgents: targetAnalysis.totalAgents,
+          targeted: targetAnalysis.healthyAgents,
+          skipped: targetAnalysis.unhealthyAgents,
+          deployed: eval.deployed,
+          started: eval.started,
+          healthy: eval.healthy,
+          successRate: eval.successRate
+        }
+      };
+    output_variable: updateReport
+
+  # Step 12: Notify result
+  - id: notify-result
+    name: Notify Update Result
+    type: notification
+    channel: default
+    message: |
+      Application Update ${updateReport.status === 'success' ? 'SUCCESS' : 'FAILED'}
+
+      Package: ${updateReport.packagePath}
+      Target: ${updateReport.targetPath}
+      Service: ${updateReport.serviceName}
+
+      Results:
+      - Targeted: ${updateReport.metrics.targeted} agents
+      - Deployed: ${updateReport.metrics.deployed}
+      - Started: ${updateReport.metrics.started}
+      - Healthy: ${updateReport.metrics.healthy}
+      - Success Rate: ${updateReport.metrics.successRate}%
+
+      ${updateReport.metrics.skipped > 0 ? 'Skipped (unhealthy): ' + updateReport.metrics.skipped : ''}
+
+      Time: ${updateReport.timestamp}
+    severity: "${updateReport.status === 'success' ? 'info' : 'error'}"

@@ -1,0 +1,141 @@
+# Metrics Collection Workflow
+# Periodic collection of system metrics from agents
+
+id: orbit:builtin:metrics-collection
+name: Metrics Collection
+version: "1.0.0"
+description: |
+  Collects system metrics (CPU, memory, disk, network) from agents
+  at regular intervals for monitoring and analysis.
+enabled: true
+
+tags:
+  - built-in
+  - data-collection
+  - metrics
+  - monitoring
+
+triggers:
+  # Scheduled metrics collection
+  - id: scheduled-metrics
+    type: schedule
+    name: Scheduled Metrics
+    interval: 1m
+    max_concurrent: 10
+
+  # Manual metrics collection
+  - id: manual-metrics
+    type: manual
+    name: Manual Metrics Collection
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to collect metrics from
+
+steps:
+  # Step 1: Collect metrics from all matching agents
+  - id: collect-metrics
+    name: Collect System Metrics
+    type: job
+    command: orbit:system.metrics
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 30s
+    output_variable: metricsResults
+
+  # Step 2: Process and analyze metrics
+  - id: process-metrics
+    name: Process Metrics
+    type: script
+    language: javascript
+    script: |
+      const results = context.metricsResults || [];
+      const timestamp = new Date().toISOString();
+
+      const processed = results.map(r => ({
+        agentId: r.agentId,
+        timestamp: timestamp,
+        cpu: {
+          usage: r.result?.cpuUsage,
+          cores: r.result?.cpuCores
+        },
+        memory: {
+          total: r.result?.totalMemory,
+          used: r.result?.usedMemory,
+          usagePercent: r.result?.memoryUsage
+        },
+        disk: {
+          total: r.result?.totalDisk,
+          used: r.result?.usedDisk,
+          usagePercent: r.result?.diskUsage
+        },
+        status: r.status
+      }));
+
+      // Calculate averages
+      const successful = processed.filter(p => p.status === 'Completed');
+      const avgCpu = successful.reduce((sum, p) => sum + (p.cpu.usage || 0), 0) / successful.length;
+      const avgMemory = successful.reduce((sum, p) => sum + (p.memory.usagePercent || 0), 0) / successful.length;
+      const avgDisk = successful.reduce((sum, p) => sum + (p.disk.usagePercent || 0), 0) / successful.length;
+
+      return {
+        timestamp: timestamp,
+        totalAgents: results.length,
+        successfulCollections: successful.length,
+        averages: {
+          cpu: avgCpu.toFixed(2),
+          memory: avgMemory.toFixed(2),
+          disk: avgDisk.toFixed(2)
+        },
+        metrics: processed
+      };
+    output_variable: metricsReport
+
+  # Step 3: Check for threshold alerts
+  - id: check-thresholds
+    name: Check Threshold Alerts
+    type: script
+    language: javascript
+    script: |
+      const report = context.metricsReport;
+      const thresholds = {
+        cpu: 80,
+        memory: 85,
+        disk: 90
+      };
+
+      const alerts = [];
+      report.metrics.forEach(m => {
+        if (m.cpu.usage > thresholds.cpu) {
+          alerts.push({ agentId: m.agentId, type: 'cpu', value: m.cpu.usage, threshold: thresholds.cpu });
+        }
+        if (m.memory.usagePercent > thresholds.memory) {
+          alerts.push({ agentId: m.agentId, type: 'memory', value: m.memory.usagePercent, threshold: thresholds.memory });
+        }
+        if (m.disk.usagePercent > thresholds.disk) {
+          alerts.push({ agentId: m.agentId, type: 'disk', value: m.disk.usagePercent, threshold: thresholds.disk });
+        }
+      });
+
+      return {
+        hasAlerts: alerts.length > 0,
+        alertCount: alerts.length,
+        alerts: alerts
+      };
+    output_variable: alertCheck
+
+  # Step 4: Send alerts if thresholds exceeded
+  - id: send-alerts
+    name: Send Threshold Alerts
+    type: notification
+    condition: "${alertCheck.hasAlerts}"
+    channel: default
+    message: |
+      Resource Threshold Alert
+
+      ${alertCheck.alertCount} threshold violations detected:
+      ${alertCheck.alerts.map(a => `- ${a.agentId}: ${a.type} at ${a.value}% (threshold: ${a.threshold}%)`).join('\n')}
+
+      Time: ${metricsReport.timestamp}
+    severity: warning

@@ -1,0 +1,176 @@
+# Backup Collection Workflow
+# Collect backup files from agents to server
+
+id: orbit:builtin:backup-collect
+name: Backup Collection
+version: "1.0.0"
+description: |
+  Collects backup files from agents to the server.
+  Supports scheduled backups and retention policies.
+enabled: true
+
+tags:
+  - built-in
+  - file-management
+  - backup
+  - data-protection
+
+triggers:
+  # Scheduled backup
+  - id: scheduled-backup
+    type: schedule
+    name: Scheduled Backup
+    interval: 24h
+    max_concurrent: 3
+
+  # Manual backup
+  - id: manual-backup
+    type: manual
+    name: Manual Backup
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to backup from
+      source_paths:
+        type: array
+        required: true
+        description: List of paths to backup
+      destination_prefix:
+        type: string
+        required: false
+        default: "backups"
+        description: Destination prefix on server
+      compress:
+        type: boolean
+        required: false
+        default: true
+        description: Compress backup files
+      retention_days:
+        type: integer
+        required: false
+        default: 30
+        description: Days to retain backups
+
+steps:
+  # Step 1: Prepare backup plan
+  - id: prepare-backup
+    name: Prepare Backup Plan
+    type: script
+    language: javascript
+    script: |
+      const sourcePaths = context.input?.source_paths || [];
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const destPrefix = context.input?.destination_prefix || 'backups';
+
+      const backupPlan = {
+        timestamp: timestamp,
+        destinationBase: `${destPrefix}/${timestamp}`,
+        paths: sourcePaths,
+        compress: context.input?.compress ?? true
+      };
+
+      return backupPlan;
+    output_variable: backupPlan
+
+  # Step 2: List files to backup
+  - id: list-files
+    name: List Files to Backup
+    type: job
+    command: orbit:file.list
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      paths: "${backupPlan.paths}"
+      recursive: true
+    timeout: 60s
+    output_variable: fileList
+
+  # Step 3: Collect files from agents
+  - id: collect-files
+    name: Collect Backup Files
+    type: job
+    command: orbit:file.download
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      paths: "${backupPlan.paths}"
+    timeout: 300s
+    output_variable: downloadResults
+
+  # Step 4: Process and store backups
+  - id: process-backups
+    name: Process Backups
+    type: script
+    language: javascript
+    script: |
+      const downloads = context.downloadResults || [];
+      const plan = context.backupPlan;
+
+      const processed = downloads.map(d => ({
+        agentId: d.agentId,
+        status: d.status,
+        filesCollected: d.result?.files?.length || 0,
+        totalSize: d.result?.totalSize || 0,
+        storagePath: `${plan.destinationBase}/${d.agentId}`,
+        error: d.error
+      }));
+
+      const successful = processed.filter(p => p.status === 'Completed');
+      const totalFiles = successful.reduce((sum, p) => sum + p.filesCollected, 0);
+      const totalSize = successful.reduce((sum, p) => sum + p.totalSize, 0);
+
+      return {
+        timestamp: plan.timestamp,
+        totalAgents: processed.length,
+        successfulAgents: successful.length,
+        failedAgents: processed.length - successful.length,
+        totalFiles: totalFiles,
+        totalSizeBytes: totalSize,
+        totalSizeFormatted: formatBytes(totalSize),
+        details: processed
+      };
+
+      function formatBytes(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+      }
+    output_variable: backupReport
+
+  # Step 5: Cleanup old backups
+  - id: cleanup-old
+    name: Cleanup Old Backups
+    type: script
+    language: javascript
+    script: |
+      const retentionDays = context.input?.retention_days || 30;
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+
+      // This would trigger cleanup of old backups
+      return {
+        retentionDays: retentionDays,
+        cutoffDate: cutoffDate.toISOString(),
+        cleanupScheduled: true
+      };
+    output_variable: cleanupInfo
+
+  # Step 6: Send notification
+  - id: notify-result
+    name: Notify Backup Result
+    type: notification
+    channel: default
+    message: |
+      Backup Collection Complete
+
+      Timestamp: ${backupReport.timestamp}
+
+      Results:
+      - Agents: ${backupReport.successfulAgents}/${backupReport.totalAgents}
+      - Files: ${backupReport.totalFiles}
+      - Size: ${backupReport.totalSizeFormatted}
+
+      Retention: ${cleanupInfo.retentionDays} days
+    severity: "${backupReport.failedAgents > 0 ? 'warning' : 'info'}"

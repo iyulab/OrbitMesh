@@ -1,0 +1,121 @@
+# System Inventory Collection Workflow
+# Collects comprehensive system information from agents
+
+id: orbit:builtin:system-inventory
+name: System Inventory Collection
+version: "1.0.0"
+description: |
+  Collects system inventory including hardware, OS, installed software,
+  and network configuration from target agents.
+enabled: true
+
+tags:
+  - built-in
+  - data-collection
+  - inventory
+  - system-info
+
+triggers:
+  # Scheduled inventory collection
+  - id: scheduled-inventory
+    type: schedule
+    name: Scheduled Inventory
+    interval: 24h
+    max_concurrent: 5
+
+  # Manual inventory collection
+  - id: manual-inventory
+    type: manual
+    name: Manual Inventory
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to collect inventory from
+      categories:
+        type: array
+        required: false
+        default: ["system", "hardware", "network", "software"]
+        description: Categories to collect
+
+steps:
+  # Step 1: Collect system information
+  - id: collect-system-info
+    name: Collect System Information
+    type: job
+    command: orbit:system.info
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 60s
+    output_variable: systemInfo
+
+  # Step 2: Collect hardware metrics
+  - id: collect-hardware
+    name: Collect Hardware Metrics
+    type: job
+    command: orbit:system.metrics
+    pattern: "${input.agent_pattern ?? '*'}"
+    timeout: 30s
+    output_variable: hardwareMetrics
+
+  # Step 3: Collect network configuration
+  - id: collect-network
+    name: Collect Network Configuration
+    type: script
+    language: javascript
+    script: |
+      const systemInfo = context.systemInfo || [];
+      const networkConfigs = systemInfo.map(info => ({
+        agentId: info.agentId,
+        hostname: info.result?.hostname,
+        ipAddresses: info.result?.networkInterfaces || [],
+        timestamp: new Date().toISOString()
+      }));
+      return networkConfigs;
+    output_variable: networkConfig
+
+  # Step 4: Aggregate inventory data
+  - id: aggregate-inventory
+    name: Aggregate Inventory Data
+    type: script
+    language: javascript
+    script: |
+      const systemInfo = context.systemInfo || [];
+      const hardwareMetrics = context.hardwareMetrics || [];
+      const networkConfig = context.networkConfig || [];
+
+      const inventory = systemInfo.map(sys => {
+        const hardware = hardwareMetrics.find(h => h.agentId === sys.agentId);
+        const network = networkConfig.find(n => n.agentId === sys.agentId);
+
+        return {
+          agentId: sys.agentId,
+          collectedAt: new Date().toISOString(),
+          system: {
+            os: sys.result?.osDescription,
+            version: sys.result?.osVersion,
+            architecture: sys.result?.osArchitecture,
+            hostname: sys.result?.hostname
+          },
+          hardware: hardware?.result || {},
+          network: network || {},
+          status: sys.status
+        };
+      });
+
+      return {
+        totalAgents: inventory.length,
+        successfulCollections: inventory.filter(i => i.status === 'Completed').length,
+        inventory: inventory
+      };
+    output_variable: inventoryReport
+
+  # Step 5: Log summary
+  - id: log-summary
+    name: Log Inventory Summary
+    type: script
+    language: javascript
+    script: |
+      const report = context.inventoryReport;
+      console.log(`Inventory collection complete: ${report.successfulCollections}/${report.totalAgents} agents`);
+      return report;

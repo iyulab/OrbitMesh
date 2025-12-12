@@ -1,0 +1,131 @@
+# Service Status Check Workflow
+# Check and report status of services across agents
+
+id: orbit:builtin:service-status-check
+name: Service Status Check
+version: "1.0.0"
+description: |
+  Checks the status of specified services across agents
+  and reports any that are not running as expected.
+enabled: true
+
+tags:
+  - built-in
+  - service-management
+  - monitoring
+  - health
+
+triggers:
+  # Scheduled service check
+  - id: scheduled-check
+    type: schedule
+    name: Scheduled Service Check
+    interval: 5m
+    max_concurrent: 5
+
+  # Manual service check
+  - id: manual-check
+    type: manual
+    name: Manual Service Check
+    input_schema:
+      agent_pattern:
+        type: string
+        required: false
+        default: "*"
+        description: Agent pattern to check
+      services:
+        type: array
+        required: true
+        description: List of service names to check
+      expected_status:
+        type: string
+        required: false
+        default: "running"
+        description: Expected service status (running, stopped)
+
+steps:
+  # Step 1: Check service status
+  - id: check-services
+    name: Check Service Status
+    type: job
+    command: orbit:service.status
+    pattern: "${input.agent_pattern ?? '*'}"
+    args:
+      services: "${input.services}"
+    timeout: 60s
+    output_variable: statusResults
+
+  # Step 2: Analyze results
+  - id: analyze-status
+    name: Analyze Service Status
+    type: script
+    language: javascript
+    script: |
+      const results = context.statusResults || [];
+      const expectedStatus = context.input?.expected_status || 'running';
+      const services = context.input?.services || [];
+
+      const analysis = results.flatMap(r => {
+        const agentServices = r.result?.services || [];
+        return services.map(svc => {
+          const found = agentServices.find(s => s.name === svc);
+          return {
+            agentId: r.agentId,
+            service: svc,
+            currentStatus: found?.status || 'not_found',
+            expectedStatus: expectedStatus,
+            isHealthy: found?.status === expectedStatus,
+            pid: found?.pid,
+            uptime: found?.uptime
+          };
+        });
+      });
+
+      const unhealthy = analysis.filter(a => !a.isHealthy);
+      const healthy = analysis.filter(a => a.isHealthy);
+
+      return {
+        timestamp: new Date().toISOString(),
+        totalChecks: analysis.length,
+        healthy: healthy.length,
+        unhealthy: unhealthy.length,
+        unhealthyServices: unhealthy,
+        summary: {
+          byService: services.map(svc => ({
+            service: svc,
+            healthy: analysis.filter(a => a.service === svc && a.isHealthy).length,
+            total: analysis.filter(a => a.service === svc).length
+          }))
+        }
+      };
+    output_variable: statusAnalysis
+
+  # Step 3: Log summary
+  - id: log-summary
+    name: Log Status Summary
+    type: script
+    language: javascript
+    script: |
+      const analysis = context.statusAnalysis;
+      console.log(`Service status check: ${analysis.healthy}/${analysis.totalChecks} healthy`);
+      analysis.summary.byService.forEach(s => {
+        console.log(`  ${s.service}: ${s.healthy}/${s.total}`);
+      });
+      return analysis;
+
+  # Step 4: Alert on unhealthy services
+  - id: alert-unhealthy
+    name: Alert Unhealthy Services
+    type: notification
+    condition: "${statusAnalysis.unhealthy > 0}"
+    channel: default
+    message: |
+      Service Status Alert
+
+      Unhealthy: ${statusAnalysis.unhealthy}/${statusAnalysis.totalChecks}
+
+      Problem Services:
+      ${statusAnalysis.unhealthyServices.map(s => `- ${s.agentId}: ${s.service} (${s.currentStatus}, expected: ${s.expectedStatus})`).join('\n')}
+
+      Time: ${statusAnalysis.timestamp}
+    severity: error
