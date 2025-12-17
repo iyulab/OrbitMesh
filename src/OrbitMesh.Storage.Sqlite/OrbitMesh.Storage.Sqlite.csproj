@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\OrbitMesh.Core\OrbitMesh.Core.csproj" />
+    <ProjectReference Include="..\OrbitMesh.Host\OrbitMesh.Host.csproj" />
   </ItemGroup>
 
 </Project>

@@ -19,6 +19,13 @@ public sealed class OrbitMeshDbContext : DbContext
     public DbSet<WorkflowInstanceEntity> WorkflowInstances => Set<WorkflowInstanceEntity>();
     public DbSet<EventEntity> Events => Set<EventEntity>();
 
+    // Security entities
+    public DbSet<BootstrapTokenEntity> BootstrapTokens => Set<BootstrapTokenEntity>();
+    public DbSet<EnrollmentEntity> Enrollments => Set<EnrollmentEntity>();
+    public DbSet<NodeCertificateEntity> NodeCertificates => Set<NodeCertificateEntity>();
+    public DbSet<ServerKeyInfoEntity> ServerKeyInfos => Set<ServerKeyInfoEntity>();
+    public DbSet<BlockedNodeEntity> BlockedNodes => Set<BlockedNodeEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -76,6 +83,46 @@ public sealed class OrbitMeshDbContext : DbContext
             entity.HasIndex(e => new { e.StreamId, e.Version }).IsUnique();
             entity.HasIndex(e => e.EventType);
             entity.HasIndex(e => e.Timestamp);
+        });
+
+        // BootstrapToken configuration
+        modelBuilder.Entity<BootstrapTokenEntity>(entity =>
+        {
+            entity.HasIndex(e => e.TokenHash).IsUnique();
+            entity.HasIndex(e => e.ExpiresAt);
+            entity.HasIndex(e => e.IsConsumed);
+        });
+
+        // Enrollment configuration
+        modelBuilder.Entity<EnrollmentEntity>(entity =>
+        {
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.RequestedAt);
+            entity.HasIndex(e => e.ExpiresAt);
+            entity.HasIndex(e => new { e.Status, e.RequestedAt });
+        });
+
+        // NodeCertificate configuration
+        modelBuilder.Entity<NodeCertificateEntity>(entity =>
+        {
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => e.ServerId);
+            entity.HasIndex(e => e.ExpiresAt);
+            entity.HasIndex(e => e.IsRevoked);
+            entity.HasIndex(e => new { e.NodeId, e.IsRevoked });
+        });
+
+        // ServerKeyInfo configuration
+        modelBuilder.Entity<ServerKeyInfoEntity>(entity =>
+        {
+            entity.HasIndex(e => e.IsActive);
+        });
+
+        // BlockedNode configuration
+        modelBuilder.Entity<BlockedNodeEntity>(entity =>
+        {
+            entity.HasIndex(e => e.BlockedAt);
         });
     }
 }

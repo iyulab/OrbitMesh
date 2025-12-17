@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using OrbitMesh.Core.Storage;
+using OrbitMesh.Host.Services.Security;
+using OrbitMesh.Storage.Sqlite.Stores;
 
 namespace OrbitMesh.Storage.Sqlite.Extensions;
 
@@ -67,5 +69,62 @@ public static class ServiceCollectionExtensions
     {
         var storage = services.GetRequiredService<IOrbitMeshStorage>();
         await storage.InitializeAsync(ct);
+    }
+
+    /// <summary>
+    /// Adds SQLite-backed security services (bootstrap tokens, enrollments, certificates).
+    /// This replaces the in-memory security implementations with persistent storage.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddOrbitMeshSqliteSecurityStores(
+        this IServiceCollection services)
+    {
+        // Remove any existing in-memory implementations if registered
+        var bootstrapTokenDescriptor = services.FirstOrDefault(d =>
+            d.ServiceType == typeof(IBootstrapTokenService));
+        if (bootstrapTokenDescriptor != null)
+        {
+            services.Remove(bootstrapTokenDescriptor);
+        }
+
+        var enrollmentDescriptor = services.FirstOrDefault(d =>
+            d.ServiceType == typeof(INodeEnrollmentService));
+        if (enrollmentDescriptor != null)
+        {
+            services.Remove(enrollmentDescriptor);
+        }
+
+        var credentialDescriptor = services.FirstOrDefault(d =>
+            d.ServiceType == typeof(INodeCredentialService));
+        if (credentialDescriptor != null)
+        {
+            services.Remove(credentialDescriptor);
+        }
+
+        // Register SQLite-backed security stores
+        services.AddScoped<IBootstrapTokenService, SqliteBootstrapTokenStore>();
+        services.AddScoped<INodeCredentialService, SqliteNodeCredentialStore>();
+        services.AddScoped<INodeEnrollmentService, SqliteNodeEnrollmentStore>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Adds SQLite storage with security stores.
+    /// This is a convenience method that calls both AddOrbitMeshSqliteStorage and AddOrbitMeshSqliteSecurityStores.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="connectionString">SQLite connection string. Default: "Data Source=orbitmesh.db"</param>
+    /// <param name="configureOptions">Optional action to configure storage options.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddOrbitMeshSqliteStorageWithSecurity(
+        this IServiceCollection services,
+        string connectionString = "Data Source=orbitmesh.db",
+        Action<SqliteStorageOptions>? configureOptions = null)
+    {
+        services.AddOrbitMeshSqliteStorage(connectionString, configureOptions);
+        services.AddOrbitMeshSqliteSecurityStores();
+        return services;
     }
 }
