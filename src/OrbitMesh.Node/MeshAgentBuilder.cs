@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using OrbitMesh.Core.Contracts;
 using OrbitMesh.Core.Enums;
 using OrbitMesh.Core.Models;
+using OrbitMesh.Node.Security;
 
 namespace OrbitMesh.Node;
 
@@ -17,14 +18,19 @@ public sealed class MeshAgentBuilder
     private readonly HandlerRegistry _handlerRegistry = new();
     private readonly List<AgentCapability> _capabilities = [];
     private readonly List<string> _tags = [];
+    private readonly Dictionary<string, string> _metadata = new();
 
     private string _agentId = Guid.NewGuid().ToString("N");
     private string _agentName = Environment.MachineName;
     private string? _group;
     private string? _accessToken;
+    private string? _bootstrapToken;
+    private string? _credentialsPath;
+    private bool _autoEnroll = true;
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private Action<IHubConnectionBuilder>? _configureConnection;
     private TimeSpan _connectionTimeout = TimeSpan.FromSeconds(30);
+    private TimeSpan _enrollmentTimeout = TimeSpan.FromHours(24);
 
     /// <summary>
     /// Creates a new MeshAgentBuilder.
@@ -73,13 +79,83 @@ public sealed class MeshAgentBuilder
     }
 
     /// <summary>
-    /// Sets the access token for server authentication.
+    /// Sets the access token for server authentication (legacy mode).
     /// </summary>
     /// <param name="accessToken">The API token for authenticating with the server.</param>
     public MeshAgentBuilder WithAccessToken(string accessToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(accessToken);
         _accessToken = accessToken;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the bootstrap token for initial enrollment.
+    /// This token is used once to enroll the node and receive a certificate.
+    /// </summary>
+    /// <param name="bootstrapToken">The one-time bootstrap token.</param>
+    public MeshAgentBuilder WithBootstrapToken(string bootstrapToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(bootstrapToken);
+        _bootstrapToken = bootstrapToken;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the path where node credentials will be stored.
+    /// </summary>
+    /// <param name="path">The file path for credential storage.</param>
+    public MeshAgentBuilder WithCredentialsPath(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        _credentialsPath = path;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets whether to automatically enroll when not enrolled.
+    /// Default is true.
+    /// </summary>
+    /// <param name="autoEnroll">Whether to auto-enroll.</param>
+    public MeshAgentBuilder WithAutoEnroll(bool autoEnroll)
+    {
+        _autoEnroll = autoEnroll;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the maximum time to wait for enrollment approval.
+    /// </summary>
+    /// <param name="timeout">The enrollment timeout.</param>
+    public MeshAgentBuilder WithEnrollmentTimeout(TimeSpan timeout)
+    {
+        _enrollmentTimeout = timeout;
+        return this;
+    }
+
+    /// <summary>
+    /// Adds metadata to the agent for enrollment.
+    /// </summary>
+    /// <param name="key">Metadata key.</param>
+    /// <param name="value">Metadata value.</param>
+    public MeshAgentBuilder WithMetadata(string key, string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        _metadata[key] = value;
+        return this;
+    }
+
+    /// <summary>
+    /// Adds multiple metadata entries.
+    /// </summary>
+    /// <param name="metadata">Metadata dictionary.</param>
+    public MeshAgentBuilder WithMetadata(IReadOnlyDictionary<string, string> metadata)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        foreach (var kvp in metadata)
+        {
+            _metadata[kvp.Key] = kvp.Value;
+        }
         return this;
     }
 
@@ -221,13 +297,15 @@ public sealed class MeshAgentBuilder
     /// </summary>
     public IMeshAgent Build()
     {
+        // Create credential manager if bootstrap token or credentials path is specified
+        var credentialManagerLogger = _loggerFactory.CreateLogger<NodeCredentialManager>();
+        var credentialManager = new NodeCredentialManager(_credentialsPath, credentialManagerLogger);
+
         var connectionBuilder = new HubConnectionBuilder()
             .WithUrl(_serverUrl, options =>
             {
-                if (!string.IsNullOrEmpty(_accessToken))
-                {
-                    options.AccessTokenProvider = () => Task.FromResult<string?>(_accessToken);
-                }
+                // Set up authentication token provider
+                options.AccessTokenProvider = () => GetAccessTokenAsync(credentialManager);
             })
             .WithAutomaticReconnect()
             .AddMessagePackProtocol();
@@ -248,9 +326,52 @@ public sealed class MeshAgentBuilder
             RegisteredAt = DateTimeOffset.UtcNow
         };
 
+        var config = new MeshAgentConfiguration
+        {
+            BootstrapToken = _bootstrapToken,
+            AutoEnroll = _autoEnroll,
+            EnrollmentTimeout = _enrollmentTimeout,
+            RequestedCapabilities = _capabilities.Select(c => c.Name).ToList(),
+            Metadata = new Dictionary<string, string>(_metadata)
+        };
+
+        var enrollmentLogger = _loggerFactory.CreateLogger<EnrollmentService>();
+        var enrollmentService = new EnrollmentService(connection, credentialManager, enrollmentLogger);
+        enrollmentService.MaxWaitTime = _enrollmentTimeout;
+
         var logger = _loggerFactory.CreateLogger<MeshAgent>();
 
-        return new MeshAgent(connection, agentInfo, _handlerRegistry, logger);
+        return new MeshAgent(
+            connection,
+            agentInfo,
+            _handlerRegistry,
+            credentialManager,
+            enrollmentService,
+            config,
+            logger);
+    }
+
+    private async Task<string?> GetAccessTokenAsync(NodeCredentialManager credentialManager)
+    {
+        // Priority 1: Certificate-based authentication
+        if (credentialManager.IsEnrolled && credentialManager.Credentials?.Certificate is not null)
+        {
+            return $"cert:{credentialManager.Credentials.Certificate}";
+        }
+
+        // Priority 2: Bootstrap token for enrollment
+        if (!string.IsNullOrEmpty(_bootstrapToken))
+        {
+            return $"bootstrap:{_bootstrapToken}";
+        }
+
+        // Priority 3: Legacy API token
+        if (!string.IsNullOrEmpty(_accessToken))
+        {
+            return _accessToken;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -279,4 +400,35 @@ public sealed class MeshAgentBuilder
         public Task<byte[]?> HandleAsync(CommandContext context, CancellationToken cancellationToken = default)
             => handler(context);
     }
+}
+
+/// <summary>
+/// Configuration for MeshAgent.
+/// </summary>
+public sealed record MeshAgentConfiguration
+{
+    /// <summary>
+    /// Bootstrap token for initial enrollment.
+    /// </summary>
+    public string? BootstrapToken { get; init; }
+
+    /// <summary>
+    /// Whether to automatically enroll when not enrolled.
+    /// </summary>
+    public bool AutoEnroll { get; init; } = true;
+
+    /// <summary>
+    /// Maximum time to wait for enrollment approval.
+    /// </summary>
+    public TimeSpan EnrollmentTimeout { get; init; } = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// Capabilities to request during enrollment.
+    /// </summary>
+    public IReadOnlyList<string> RequestedCapabilities { get; init; } = [];
+
+    /// <summary>
+    /// Node metadata for enrollment.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Metadata { get; init; } = new Dictionary<string, string>();
 }

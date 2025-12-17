@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using OrbitMesh.Core.Contracts;
 using OrbitMesh.Core.Enums;
 using OrbitMesh.Core.Models;
+using OrbitMesh.Node.Security;
 
 namespace OrbitMesh.Node;
 
@@ -16,6 +17,9 @@ public sealed class MeshAgent : IMeshAgent
     private readonly AgentInfo _agentInfo;
     private readonly ILogger<MeshAgent> _logger;
     private readonly IHandlerRegistry _handlerRegistry;
+    private readonly NodeCredentialManager _credentialManager;
+    private readonly EnrollmentService _enrollmentService;
+    private readonly MeshAgentConfiguration _config;
     private readonly JobCancellationManager _cancellationManager = new();
     private readonly TaskCompletionSource _shutdownTcs = new();
     private readonly CancellationTokenSource _heartbeatCts = new();
@@ -35,11 +39,17 @@ public sealed class MeshAgent : IMeshAgent
         HubConnection connection,
         AgentInfo agentInfo,
         IHandlerRegistry handlerRegistry,
+        NodeCredentialManager credentialManager,
+        EnrollmentService enrollmentService,
+        MeshAgentConfiguration config,
         ILogger<MeshAgent> logger)
     {
         _connection = connection;
         _agentInfo = agentInfo;
         _handlerRegistry = handlerRegistry;
+        _credentialManager = credentialManager;
+        _enrollmentService = enrollmentService;
+        _config = config;
         _logger = logger;
 
         ConfigureConnection();
@@ -70,7 +80,16 @@ public sealed class MeshAgent : IMeshAgent
             "Connecting to OrbitMesh server. AgentId: {AgentId}, Name: {Name}",
             Id, Name);
 
+        // Initialize credentials (loads existing or generates new key pair)
+        await _credentialManager.InitializeAsync(Id, cancellationToken);
+
         await _connection.StartAsync(cancellationToken);
+
+        // Handle enrollment if not already enrolled
+        if (!_credentialManager.IsEnrolled && _config.AutoEnroll)
+        {
+            await HandleEnrollmentAsync(cancellationToken);
+        }
 
         // Register with the server using InvokeCoreAsync to explicitly pass arguments array.
         // The server's CancellationToken parameter is injected by SignalR, not passed by client.
@@ -92,6 +111,55 @@ public sealed class MeshAgent : IMeshAgent
 
         // Start heartbeat task
         _ = StartHeartbeatAsync(_heartbeatCts.Token);
+    }
+
+    private async Task HandleEnrollmentAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Starting enrollment process. NodeId: {NodeId}", Id);
+
+        var outcome = await _enrollmentService.EnrollAsync(
+            Id,
+            Name,
+            _config.Metadata,
+            _config.RequestedCapabilities,
+            cancellationToken);
+
+        switch (outcome.Status)
+        {
+            case EnrollmentStatus.AlreadyEnrolled:
+            case EnrollmentStatus.Approved:
+                _logger.LogInformation("Enrollment complete. NodeId: {NodeId}", Id);
+                break;
+
+            case EnrollmentStatus.Pending:
+                _logger.LogInformation(
+                    "Enrollment pending approval. EnrollmentId: {EnrollmentId}. Waiting for approval...",
+                    outcome.EnrollmentId);
+
+                // Wait for approval
+                var waitOutcome = await _enrollmentService.WaitForApprovalAsync(cancellationToken);
+
+                if (!waitOutcome.IsComplete)
+                {
+                    throw new InvalidOperationException(
+                        $"Enrollment failed: {waitOutcome.Error ?? waitOutcome.Status.ToString()}");
+                }
+
+                _logger.LogInformation("Enrollment approved. NodeId: {NodeId}", Id);
+                break;
+
+            case EnrollmentStatus.Rejected:
+                throw new InvalidOperationException($"Enrollment rejected: {outcome.Error}");
+
+            case EnrollmentStatus.Blocked:
+                throw new InvalidOperationException("Node is blocked from enrollment");
+
+            case EnrollmentStatus.Expired:
+                throw new InvalidOperationException("Enrollment expired");
+
+            default:
+                throw new InvalidOperationException($"Enrollment failed: {outcome.Error}");
+        }
     }
 
     /// <inheritdoc />
@@ -321,6 +389,9 @@ public sealed class MeshAgent : IMeshAgent
         _heartbeatCts.Dispose();
 
         await _connection.DisposeAsync();
+
+        // Dispose credential manager
+        _credentialManager.Dispose();
 
         _shutdownTcs.TrySetResult();
     }
