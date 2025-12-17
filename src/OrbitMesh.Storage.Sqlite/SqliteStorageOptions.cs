@@ -2,6 +2,7 @@ namespace OrbitMesh.Storage.Sqlite;
 
 /// <summary>
 /// Configuration options for SQLite storage.
+/// All recommended options are enabled by default.
 /// </summary>
 public sealed class SqliteStorageOptions
 {
@@ -14,13 +15,13 @@ public sealed class SqliteStorageOptions
     /// <summary>
     /// Whether to enable WAL (Write-Ahead Logging) mode.
     /// WAL provides better concurrency for read operations.
-    /// Default: true
+    /// Default: true (recommended)
     /// </summary>
     public bool EnableWalMode { get; set; } = true;
 
     /// <summary>
     /// Whether to automatically apply migrations on startup.
-    /// Default: true
+    /// Default: true (recommended)
     /// </summary>
     public bool AutoMigrate { get; set; } = true;
 
@@ -35,4 +36,17 @@ public sealed class SqliteStorageOptions
     /// Default: 5000 (5 seconds)
     /// </summary>
     public int BusyTimeout { get; set; } = 5000;
+
+    /// <summary>
+    /// Whether to enable SQLite-backed security stores (bootstrap tokens, enrollments, certificates).
+    /// When enabled, replaces in-memory security implementations with persistent storage.
+    /// Default: true (recommended for production)
+    /// </summary>
+    public bool EnableSecurityStores { get; set; } = true;
+
+    /// <summary>
+    /// Whether to enable core storage (jobs, agents, workflows, events).
+    /// Default: true
+    /// </summary>
+    public bool EnableCoreStores { get; set; } = true;
 }

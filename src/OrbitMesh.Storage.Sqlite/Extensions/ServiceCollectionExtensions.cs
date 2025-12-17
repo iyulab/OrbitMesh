@@ -12,20 +12,38 @@ namespace OrbitMesh.Storage.Sqlite.Extensions;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Adds SQLite storage services to the service collection.
+    /// Adds OrbitMesh SQLite storage with all recommended features enabled by default.
+    /// <para>
+    /// Default configuration (all enabled):
+    /// <list type="bullet">
+    ///   <item><description>Core stores (jobs, agents, workflows, events)</description></item>
+    ///   <item><description>Security stores (bootstrap tokens, enrollments, certificates)</description></item>
+    ///   <item><description>WAL mode for better concurrency</description></item>
+    ///   <item><description>Auto-migration on startup</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// To disable specific features, use the configureOptions parameter:
+    /// <code>
+    /// services.AddOrbitMeshSqliteStorage(opt => {
+    ///     opt.EnableSecurityStores = false;  // Use in-memory security instead
+    ///     opt.EnableWalMode = false;         // Disable WAL mode
+    /// });
+    /// </code>
+    /// </para>
     /// </summary>
     /// <param name="services">The service collection.</param>
-    /// <param name="connectionString">SQLite connection string. Default: "Data Source=orbitmesh.db"</param>
-    /// <param name="configureOptions">Optional action to configure storage options.</param>
+    /// <param name="configureOptions">Optional action to configure/override storage options.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddOrbitMeshSqliteStorage(
         this IServiceCollection services,
-        string connectionString = "Data Source=orbitmesh.db",
         Action<SqliteStorageOptions>? configureOptions = null)
     {
-        // Configure options
-        var options = new SqliteStorageOptions { ConnectionString = connectionString };
+        // Create options with defaults (all recommended features enabled)
+        var options = new SqliteStorageOptions();
         configureOptions?.Invoke(options);
+
+        // Register options for DI
         services.Configure<SqliteStorageOptions>(opt =>
         {
             opt.ConnectionString = options.ConnectionString;
@@ -33,12 +51,14 @@ public static class ServiceCollectionExtensions
             opt.AutoMigrate = options.AutoMigrate;
             opt.CacheSize = options.CacheSize;
             opt.BusyTimeout = options.BusyTimeout;
+            opt.EnableSecurityStores = options.EnableSecurityStores;
+            opt.EnableCoreStores = options.EnableCoreStores;
         });
 
-        // Register DbContext factory
+        // Register DbContext factory (always needed)
         services.AddDbContextFactory<OrbitMeshDbContext>(dbOptions =>
         {
-            dbOptions.UseSqlite(connectionString, sqliteOptions =>
+            dbOptions.UseSqlite(options.ConnectionString, sqliteOptions =>
             {
                 sqliteOptions.CommandTimeout(30);
             });
@@ -49,14 +69,57 @@ public static class ServiceCollectionExtensions
 #endif
         });
 
-        // Register storage
-        services.AddSingleton<IOrbitMeshStorage, SqliteOrbitMeshStorage>();
-        services.AddSingleton<IJobStore>(sp => sp.GetRequiredService<IOrbitMeshStorage>().Jobs);
-        services.AddSingleton<IAgentStore>(sp => sp.GetRequiredService<IOrbitMeshStorage>().Agents);
-        services.AddSingleton<IWorkflowStore>(sp => sp.GetRequiredService<IOrbitMeshStorage>().Workflows);
-        services.AddSingleton<IEventStore>(sp => sp.GetRequiredService<IOrbitMeshStorage>().Events);
+        // Also register DbContext for scoped resolution
+        services.AddDbContext<OrbitMeshDbContext>(dbOptions =>
+        {
+            dbOptions.UseSqlite(options.ConnectionString, sqliteOptions =>
+            {
+                sqliteOptions.CommandTimeout(30);
+            });
+
+#if DEBUG
+            dbOptions.EnableSensitiveDataLogging();
+            dbOptions.EnableDetailedErrors();
+#endif
+        });
+
+        // Register core storage (enabled by default)
+        if (options.EnableCoreStores)
+        {
+            services.AddSingleton<IOrbitMeshStorage, SqliteOrbitMeshStorage>();
+            services.AddSingleton<IJobStore>(sp => sp.GetRequiredService<IOrbitMeshStorage>().Jobs);
+            services.AddSingleton<IAgentStore>(sp => sp.GetRequiredService<IOrbitMeshStorage>().Agents);
+            services.AddSingleton<IWorkflowStore>(sp => sp.GetRequiredService<IOrbitMeshStorage>().Workflows);
+            services.AddSingleton<IEventStore>(sp => sp.GetRequiredService<IOrbitMeshStorage>().Events);
+        }
+
+        // Register security stores (enabled by default)
+        if (options.EnableSecurityStores)
+        {
+            RegisterSecurityStores(services);
+        }
 
         return services;
+    }
+
+    /// <summary>
+    /// Adds OrbitMesh SQLite storage with a specific connection string.
+    /// All recommended features are enabled by default.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="connectionString">SQLite connection string.</param>
+    /// <param name="configureOptions">Optional action to configure/override additional options.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddOrbitMeshSqliteStorage(
+        this IServiceCollection services,
+        string connectionString,
+        Action<SqliteStorageOptions>? configureOptions = null)
+    {
+        return services.AddOrbitMeshSqliteStorage(opt =>
+        {
+            opt.ConnectionString = connectionString;
+            configureOptions?.Invoke(opt);
+        });
     }
 
     /// <summary>
@@ -71,60 +134,25 @@ public static class ServiceCollectionExtensions
         await storage.InitializeAsync(ct);
     }
 
-    /// <summary>
-    /// Adds SQLite-backed security services (bootstrap tokens, enrollments, certificates).
-    /// This replaces the in-memory security implementations with persistent storage.
-    /// </summary>
-    /// <param name="services">The service collection.</param>
-    /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddOrbitMeshSqliteSecurityStores(
-        this IServiceCollection services)
+    private static void RegisterSecurityStores(IServiceCollection services)
     {
         // Remove any existing in-memory implementations if registered
-        var bootstrapTokenDescriptor = services.FirstOrDefault(d =>
-            d.ServiceType == typeof(IBootstrapTokenService));
-        if (bootstrapTokenDescriptor != null)
-        {
-            services.Remove(bootstrapTokenDescriptor);
-        }
-
-        var enrollmentDescriptor = services.FirstOrDefault(d =>
-            d.ServiceType == typeof(INodeEnrollmentService));
-        if (enrollmentDescriptor != null)
-        {
-            services.Remove(enrollmentDescriptor);
-        }
-
-        var credentialDescriptor = services.FirstOrDefault(d =>
-            d.ServiceType == typeof(INodeCredentialService));
-        if (credentialDescriptor != null)
-        {
-            services.Remove(credentialDescriptor);
-        }
+        RemoveExistingService<IBootstrapTokenService>(services);
+        RemoveExistingService<INodeEnrollmentService>(services);
+        RemoveExistingService<INodeCredentialService>(services);
 
         // Register SQLite-backed security stores
         services.AddScoped<IBootstrapTokenService, SqliteBootstrapTokenStore>();
         services.AddScoped<INodeCredentialService, SqliteNodeCredentialStore>();
         services.AddScoped<INodeEnrollmentService, SqliteNodeEnrollmentStore>();
-
-        return services;
     }
 
-    /// <summary>
-    /// Adds SQLite storage with security stores.
-    /// This is a convenience method that calls both AddOrbitMeshSqliteStorage and AddOrbitMeshSqliteSecurityStores.
-    /// </summary>
-    /// <param name="services">The service collection.</param>
-    /// <param name="connectionString">SQLite connection string. Default: "Data Source=orbitmesh.db"</param>
-    /// <param name="configureOptions">Optional action to configure storage options.</param>
-    /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddOrbitMeshSqliteStorageWithSecurity(
-        this IServiceCollection services,
-        string connectionString = "Data Source=orbitmesh.db",
-        Action<SqliteStorageOptions>? configureOptions = null)
+    private static void RemoveExistingService<TService>(IServiceCollection services)
     {
-        services.AddOrbitMeshSqliteStorage(connectionString, configureOptions);
-        services.AddOrbitMeshSqliteSecurityStores();
-        return services;
+        var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(TService));
+        if (descriptor != null)
+        {
+            services.Remove(descriptor);
+        }
     }
 }
