@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using OrbitMesh.Core.Contracts;
 using OrbitMesh.Core.Enums;
 using OrbitMesh.Core.Models;
 using OrbitMesh.Host.Services;
+using OrbitMesh.Host.Services.Security;
 
 namespace OrbitMesh.Host.Hubs;
 
@@ -19,6 +21,10 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
     private readonly IProgressService _progressService;
     private readonly IStreamingService _streamingService;
     private readonly IApiTokenService _tokenService;
+    private readonly IBootstrapTokenService _bootstrapTokenService;
+    private readonly INodeEnrollmentService _enrollmentService;
+    private readonly INodeCredentialService _credentialService;
+    private readonly SecurityOptions _securityOptions;
     private readonly ILogger<AgentHub> _logger;
 
     /// <summary>
@@ -31,12 +37,21 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
     /// </summary>
     public const string AgentScope = "agent";
 
+    /// <summary>
+    /// SignalR group for nodes pending enrollment.
+    /// </summary>
+    public const string PendingEnrollmentGroup = "pending-enrollment";
+
     public AgentHub(
         IAgentRegistry agentRegistry,
         IJobManager jobManager,
         IProgressService progressService,
         IStreamingService streamingService,
         IApiTokenService tokenService,
+        IBootstrapTokenService bootstrapTokenService,
+        INodeEnrollmentService enrollmentService,
+        INodeCredentialService credentialService,
+        IOptions<SecurityOptions> securityOptions,
         ILogger<AgentHub> logger)
     {
         _agentRegistry = agentRegistry;
@@ -44,6 +59,10 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
         _progressService = progressService;
         _streamingService = streamingService;
         _tokenService = tokenService;
+        _bootstrapTokenService = bootstrapTokenService;
+        _enrollmentService = enrollmentService;
+        _credentialService = credentialService;
+        _securityOptions = securityOptions.Value;
         _logger = logger;
     }
 
@@ -54,48 +73,137 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
             "Agent connection initiated. ConnectionId: {ConnectionId}",
             Context.ConnectionId);
 
-        // Validate API token from query string or header
         var httpContext = Context.GetHttpContext();
-        if (httpContext is not null)
+        if (httpContext is null)
         {
-            var token = httpContext.Request.Query["access_token"].FirstOrDefault()
-                ?? httpContext.Request.Headers.Authorization.FirstOrDefault()?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
-
-            if (!string.IsNullOrEmpty(token))
+            _logger.LogWarning("No HTTP context available. ConnectionId: {ConnectionId}", Context.ConnectionId);
+            if (!_securityOptions.AllowAnonymous)
             {
-                var validToken = await _tokenService.ValidateTokenAsync(token, AgentScope);
-                if (validToken is not null)
-                {
-                    Context.Items["TokenId"] = validToken.Id;
-                    Context.Items["TokenName"] = validToken.Name;
-                    await _tokenService.UpdateLastUsedAsync(validToken.Id);
-
-                    _logger.LogInformation(
-                        "Agent authenticated with token. TokenName: {TokenName}, ConnectionId: {ConnectionId}",
-                        validToken.Name,
-                        Context.ConnectionId);
-                }
-                else
-                {
-                    _logger.LogWarning(
-                        "Invalid or expired token provided. ConnectionId: {ConnectionId}",
-                        Context.ConnectionId);
-                    Context.Abort();
-                    return;
-                }
+                Context.Abort();
+                return;
             }
-            else
+            await Groups.AddToGroupAsync(Context.ConnectionId, AllAgentsGroup);
+            await base.OnConnectedAsync();
+            return;
+        }
+
+        // Extract authentication tokens from query string or header
+        var accessToken = httpContext.Request.Query["access_token"].FirstOrDefault()
+            ?? httpContext.Request.Headers.Authorization.FirstOrDefault()?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+        var bootstrapToken = httpContext.Request.Query["bootstrap_token"].FirstOrDefault()
+            ?? httpContext.Request.Headers["X-Bootstrap-Token"].FirstOrDefault();
+        var nodeId = httpContext.Request.Query["node_id"].FirstOrDefault()
+            ?? httpContext.Request.Headers["X-Node-Id"].FirstOrDefault();
+        var certificate = httpContext.Request.Query["certificate"].FirstOrDefault()
+            ?? httpContext.Request.Headers["X-Node-Certificate"].FirstOrDefault();
+
+        // Priority 1: Certificate-based authentication (for enrolled nodes)
+        if (!string.IsNullOrEmpty(certificate) && !string.IsNullOrEmpty(nodeId))
+        {
+            var validation = await _credentialService.ValidateCertificateAsync(certificate);
+            if (validation.IsValid && validation.NodeId == nodeId)
             {
-                // Check if anonymous connections are allowed (token not required)
-                // For now, allow anonymous but log warning
-                _logger.LogWarning(
-                    "Agent connected without token. ConnectionId: {ConnectionId}. Consider requiring authentication in production.",
+                Context.Items["NodeId"] = nodeId;
+                Context.Items["AuthType"] = "Certificate";
+                Context.Items["IsEnrolled"] = true;
+
+                _logger.LogInformation(
+                    "Node authenticated with certificate. NodeId: {NodeId}, ConnectionId: {ConnectionId}",
+                    nodeId,
                     Context.ConnectionId);
+
+                await Groups.AddToGroupAsync(Context.ConnectionId, AllAgentsGroup);
+                await base.OnConnectedAsync();
+                return;
+            }
+
+            _logger.LogWarning(
+                "Invalid certificate provided. NodeId: {NodeId}, ConnectionId: {ConnectionId}",
+                nodeId,
+                Context.ConnectionId);
+            Context.Abort();
+            return;
+        }
+
+        // Priority 2: Bootstrap token authentication (for enrollment)
+        if (!string.IsNullOrEmpty(bootstrapToken))
+        {
+            var validation = await _bootstrapTokenService.ValidateAndConsumeAsync(bootstrapToken);
+            if (validation is not null)
+            {
+                Context.Items["BootstrapTokenId"] = validation.TokenId;
+                Context.Items["AuthType"] = "Bootstrap";
+                Context.Items["IsEnrolled"] = false;
+                Context.Items["AllowedCapabilities"] = validation.AllowedCapabilities;
+
+                _logger.LogInformation(
+                    "Node connected with bootstrap token for enrollment. TokenId: {TokenId}, ConnectionId: {ConnectionId}",
+                    validation.TokenId,
+                    Context.ConnectionId);
+
+                // Add to pending enrollment group (limited access)
+                await Groups.AddToGroupAsync(Context.ConnectionId, PendingEnrollmentGroup);
+                await base.OnConnectedAsync();
+                return;
+            }
+
+            _logger.LogWarning(
+                "Invalid or consumed bootstrap token provided. ConnectionId: {ConnectionId}",
+                Context.ConnectionId);
+            Context.Abort();
+            return;
+        }
+
+        // Priority 3: Legacy API token authentication
+        if (!string.IsNullOrEmpty(accessToken))
+        {
+            var validToken = await _tokenService.ValidateTokenAsync(accessToken, AgentScope);
+            if (validToken is not null)
+            {
+                Context.Items["TokenId"] = validToken.Id;
+                Context.Items["TokenName"] = validToken.Name;
+                Context.Items["AuthType"] = "ApiToken";
+                await _tokenService.UpdateLastUsedAsync(validToken.Id);
+
+                _logger.LogInformation(
+                    "Agent authenticated with API token. TokenName: {TokenName}, ConnectionId: {ConnectionId}",
+                    validToken.Name,
+                    Context.ConnectionId);
+
+                await Groups.AddToGroupAsync(Context.ConnectionId, AllAgentsGroup);
+                await base.OnConnectedAsync();
+                return;
+            }
+
+            _logger.LogWarning(
+                "Invalid or expired API token provided. ConnectionId: {ConnectionId}",
+                Context.ConnectionId);
+
+            // If certificate auth is required, reject
+            if (_securityOptions.RequireCertificateAuth)
+            {
+                Context.Abort();
+                return;
             }
         }
 
-        await Groups.AddToGroupAsync(Context.ConnectionId, AllAgentsGroup);
-        await base.OnConnectedAsync();
+        // No valid authentication provided
+        if (_securityOptions.AllowAnonymous)
+        {
+            Context.Items["AuthType"] = "Anonymous";
+            _logger.LogWarning(
+                "Agent connected without authentication. ConnectionId: {ConnectionId}. Anonymous access is enabled.",
+                Context.ConnectionId);
+
+            await Groups.AddToGroupAsync(Context.ConnectionId, AllAgentsGroup);
+            await base.OnConnectedAsync();
+            return;
+        }
+
+        _logger.LogWarning(
+            "Agent connection rejected: No valid authentication provided. ConnectionId: {ConnectionId}",
+            Context.ConnectionId);
+        Context.Abort();
     }
 
     /// <inheritdoc />
@@ -318,5 +426,185 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
             Context.ConnectionId);
 
         return _streamingService.SubscribeAsync(jobId, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<NodeEnrollmentResult> RequestEnrollmentAsync(
+        NodeEnrollmentRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        // Verify the connection is authenticated with a bootstrap token
+        var authType = Context.Items["AuthType"] as string;
+        if (authType != "Bootstrap")
+        {
+            _logger.LogWarning(
+                "Enrollment request rejected: Not authenticated with bootstrap token. ConnectionId: {ConnectionId}, AuthType: {AuthType}",
+                Context.ConnectionId,
+                authType ?? "None");
+
+            return NodeEnrollmentResult.Failed("Enrollment requires a valid bootstrap token");
+        }
+
+        try
+        {
+            _logger.LogInformation(
+                "Processing enrollment request. NodeId: {NodeId}, NodeName: {NodeName}, ConnectionId: {ConnectionId}",
+                request.NodeId,
+                request.NodeName,
+                Context.ConnectionId);
+
+            // Validate signature
+            var isSignatureValid = await _credentialService.VerifySignatureAsync(
+                request.NodeId,
+                request.PublicKey,
+                request.Signature,
+                cancellationToken);
+
+            if (!isSignatureValid)
+            {
+                _logger.LogWarning(
+                    "Enrollment request rejected: Invalid signature. NodeId: {NodeId}",
+                    request.NodeId);
+                return NodeEnrollmentResult.Failed("Invalid signature");
+            }
+
+            // Check if node is blocked
+            var isBlocked = await _enrollmentService.IsNodeBlockedAsync(request.NodeId, cancellationToken);
+            if (isBlocked)
+            {
+                _logger.LogWarning(
+                    "Enrollment request rejected: Node is blocked. NodeId: {NodeId}",
+                    request.NodeId);
+                return NodeEnrollmentResult.Blocked();
+            }
+
+            // Get bootstrap token ID from context
+            var bootstrapTokenId = Context.Items["BootstrapTokenId"] as string ?? string.Empty;
+
+            // Create enrollment request
+            var enrollment = new EnrollmentRequest
+            {
+                NodeId = request.NodeId,
+                NodeName = request.NodeName,
+                PublicKey = request.PublicKey,
+                RequestedCapabilities = request.RequestedCapabilities,
+                Metadata = request.Metadata,
+                Signature = request.Signature
+            };
+
+            var enrollmentResult = await _enrollmentService.RequestEnrollmentAsync(
+                enrollment, bootstrapTokenId, cancellationToken);
+
+            // Store enrollment ID in connection context
+            Context.Items["EnrollmentId"] = enrollmentResult.EnrollmentId;
+
+            if (enrollmentResult.Status == EnrollmentStatus.Approved)
+            {
+                // Auto-approved - issue certificate immediately
+                var certificate = await _credentialService.IssueCertificateAsync(
+                    request.NodeId,
+                    request.PublicKey,
+                    enrollmentResult.ApprovedCapabilities ?? [],
+                    cancellationToken);
+
+                var serverKeyInfo = await _credentialService.GetServerKeyInfoAsync(cancellationToken);
+
+                _logger.LogInformation(
+                    "Enrollment auto-approved and certificate issued. NodeId: {NodeId}, EnrollmentId: {EnrollmentId}",
+                    request.NodeId,
+                    enrollmentResult.EnrollmentId);
+
+                // Move from pending enrollment group to all agents group
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, PendingEnrollmentGroup, cancellationToken);
+                await Groups.AddToGroupAsync(Context.ConnectionId, AllAgentsGroup, cancellationToken);
+
+                Context.Items["IsEnrolled"] = true;
+                Context.Items["NodeId"] = request.NodeId;
+
+                return NodeEnrollmentResult.Approved(certificate.ToBase64(), serverKeyInfo.PublicKey);
+            }
+
+            _logger.LogInformation(
+                "Enrollment request pending approval. NodeId: {NodeId}, EnrollmentId: {EnrollmentId}",
+                request.NodeId,
+                enrollmentResult.EnrollmentId);
+
+            return NodeEnrollmentResult.Pending(enrollmentResult.EnrollmentId ?? string.Empty);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing enrollment request. NodeId: {NodeId}", request.NodeId);
+            return NodeEnrollmentResult.Failed($"Enrollment failed: {ex.Message}");
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<NodeEnrollmentResult> CheckEnrollmentStatusAsync(
+        string enrollmentId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            _logger.LogDebug(
+                "Checking enrollment status. EnrollmentId: {EnrollmentId}, ConnectionId: {ConnectionId}",
+                enrollmentId,
+                Context.ConnectionId);
+
+            var status = await _enrollmentService.GetEnrollmentStatusAsync(enrollmentId, cancellationToken);
+
+            switch (status.Status)
+            {
+                case EnrollmentStatus.Approved:
+                    // Enrollment approved - issue certificate
+                    var enrollment = await _enrollmentService.GetEnrollmentAsync(enrollmentId, cancellationToken);
+                    if (enrollment is null)
+                    {
+                        return NodeEnrollmentResult.Failed("Enrollment not found");
+                    }
+
+                    var certificate = await _credentialService.IssueCertificateAsync(
+                        enrollment.NodeId,
+                        enrollment.PublicKey,
+                        status.ApprovedCapabilities ?? [],
+                        cancellationToken);
+
+                    var serverKeyInfo = await _credentialService.GetServerKeyInfoAsync(cancellationToken);
+
+                    _logger.LogInformation(
+                        "Enrollment approved, certificate issued. NodeId: {NodeId}, EnrollmentId: {EnrollmentId}",
+                        enrollment.NodeId,
+                        enrollmentId);
+
+                    // Move from pending enrollment group to all agents group
+                    await Groups.RemoveFromGroupAsync(Context.ConnectionId, PendingEnrollmentGroup, cancellationToken);
+                    await Groups.AddToGroupAsync(Context.ConnectionId, AllAgentsGroup, cancellationToken);
+
+                    Context.Items["IsEnrolled"] = true;
+                    Context.Items["NodeId"] = enrollment.NodeId;
+
+                    return NodeEnrollmentResult.Approved(certificate.ToBase64(), serverKeyInfo.PublicKey);
+
+                case EnrollmentStatus.Pending:
+                    return NodeEnrollmentResult.Pending(enrollmentId);
+
+                case EnrollmentStatus.Rejected:
+                    _logger.LogInformation(
+                        "Enrollment was rejected. EnrollmentId: {EnrollmentId}, Reason: {Reason}",
+                        enrollmentId,
+                        status.RejectionReason);
+                    return NodeEnrollmentResult.Rejected(status.RejectionReason);
+
+                case EnrollmentStatus.Expired:
+                    return NodeEnrollmentResult.Failed("Enrollment expired");
+
+                default:
+                    return NodeEnrollmentResult.Failed($"Unknown enrollment status: {status.Status}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking enrollment status. EnrollmentId: {EnrollmentId}", enrollmentId);
+            return NodeEnrollmentResult.Failed($"Failed to check enrollment status: {ex.Message}");
+        }
     }
 }

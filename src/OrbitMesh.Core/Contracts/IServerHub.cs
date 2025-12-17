@@ -69,6 +69,27 @@ public interface IServerHub
     /// <param name="item">The stream item to publish.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task ReportStreamItemAsync(StreamItem item, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Requests enrollment for a new node.
+    /// Called during initial connection with a bootstrap token.
+    /// </summary>
+    /// <param name="request">The enrollment request with node info and public key.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Enrollment result with status and optional certificate.</returns>
+    Task<NodeEnrollmentResult> RequestEnrollmentAsync(
+        NodeEnrollmentRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Checks the status of a pending enrollment.
+    /// </summary>
+    /// <param name="enrollmentId">The enrollment ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Current enrollment status.</returns>
+    Task<NodeEnrollmentResult> CheckEnrollmentStatusAsync(
+        string enrollmentId,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -111,4 +132,154 @@ public sealed record AgentRegistrationResult
     /// </summary>
     public static AgentRegistrationResult Failed(string error) =>
         new() { Success = false, Error = error };
+}
+
+/// <summary>
+/// Request for node enrollment.
+/// </summary>
+public sealed record NodeEnrollmentRequest
+{
+    /// <summary>
+    /// Unique node identifier.
+    /// </summary>
+    public required string NodeId { get; init; }
+
+    /// <summary>
+    /// Display name for the node.
+    /// </summary>
+    public required string NodeName { get; init; }
+
+    /// <summary>
+    /// Base64-encoded public key (Ed25519).
+    /// </summary>
+    public required string PublicKey { get; init; }
+
+    /// <summary>
+    /// Capabilities the node is requesting.
+    /// </summary>
+    public IReadOnlyList<string> RequestedCapabilities { get; init; } = [];
+
+    /// <summary>
+    /// Node metadata (hostname, platform, version, etc.).
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Metadata { get; init; }
+        = new Dictionary<string, string>();
+
+    /// <summary>
+    /// Signature of the request (for verification).
+    /// </summary>
+    public required string Signature { get; init; }
+}
+
+/// <summary>
+/// Result of node enrollment request.
+/// </summary>
+public sealed record NodeEnrollmentResult
+{
+    /// <summary>
+    /// Whether the request was successful.
+    /// </summary>
+    public required bool Success { get; init; }
+
+    /// <summary>
+    /// Enrollment status.
+    /// </summary>
+    public required NodeEnrollmentStatus Status { get; init; }
+
+    /// <summary>
+    /// Enrollment ID for status polling (if pending).
+    /// </summary>
+    public string? EnrollmentId { get; init; }
+
+    /// <summary>
+    /// Base64-encoded certificate (if approved).
+    /// </summary>
+    public string? Certificate { get; init; }
+
+    /// <summary>
+    /// Server's public key for verification.
+    /// </summary>
+    public string? ServerPublicKey { get; init; }
+
+    /// <summary>
+    /// Error message if failed.
+    /// </summary>
+    public string? Error { get; init; }
+
+    /// <summary>
+    /// Suggested poll interval for pending enrollments.
+    /// </summary>
+    public TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(30);
+
+    public static NodeEnrollmentResult Pending(string enrollmentId) => new()
+    {
+        Success = true,
+        Status = NodeEnrollmentStatus.Pending,
+        EnrollmentId = enrollmentId
+    };
+
+    public static NodeEnrollmentResult Approved(string certificate, string serverPublicKey) => new()
+    {
+        Success = true,
+        Status = NodeEnrollmentStatus.Approved,
+        Certificate = certificate,
+        ServerPublicKey = serverPublicKey
+    };
+
+    public static NodeEnrollmentResult Rejected(string? reason = null) => new()
+    {
+        Success = false,
+        Status = NodeEnrollmentStatus.Rejected,
+        Error = reason ?? "Enrollment rejected"
+    };
+
+    public static NodeEnrollmentResult Failed(string error) => new()
+    {
+        Success = false,
+        Status = NodeEnrollmentStatus.Failed,
+        Error = error
+    };
+
+    public static NodeEnrollmentResult Blocked() => new()
+    {
+        Success = false,
+        Status = NodeEnrollmentStatus.Blocked,
+        Error = "Node is blocked from enrollment"
+    };
+}
+
+/// <summary>
+/// Node enrollment status.
+/// </summary>
+public enum NodeEnrollmentStatus
+{
+    /// <summary>
+    /// Enrollment is pending admin approval.
+    /// </summary>
+    Pending = 0,
+
+    /// <summary>
+    /// Enrollment has been approved.
+    /// </summary>
+    Approved = 1,
+
+    /// <summary>
+    /// Enrollment has been rejected.
+    /// </summary>
+    Rejected = 2,
+
+    /// <summary>
+    /// Enrollment expired.
+    /// </summary>
+    Expired = 3,
+
+    /// <summary>
+    /// Enrollment failed (validation error).
+    /// </summary>
+    Failed = 4,
+
+    /// <summary>
+    /// Node is blocked from enrollment.
+    /// </summary>
+    Blocked = 5
 }

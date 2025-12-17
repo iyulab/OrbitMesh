@@ -156,6 +156,11 @@ public sealed record BootstrapTokenValidation
     public IReadOnlyList<string> PreApprovedCapabilities { get; init; } = [];
 
     /// <summary>
+    /// Allowed capabilities for this token (alias for PreApprovedCapabilities).
+    /// </summary>
+    public IReadOnlyList<string> AllowedCapabilities => PreApprovedCapabilities;
+
+    /// <summary>
     /// If true, automatically approve the enrolling node.
     /// </summary>
     public bool AutoApprove { get; init; }

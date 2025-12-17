@@ -137,6 +137,53 @@ public sealed class InMemoryNodeCredentialService : INodeCredentialService
     }
 
     /// <inheritdoc />
+    public Task<NodeCertificate> IssueCertificateAsync(
+        string nodeId,
+        string publicKey,
+        IReadOnlyList<string> capabilities,
+        CancellationToken cancellationToken = default)
+    {
+        // Use nodeId as nodeName for simplified version
+        return IssueCertificateAsync(nodeId, nodeId, publicKey, capabilities, 90, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<bool> VerifySignatureAsync(
+        string nodeId,
+        string publicKey,
+        string signature,
+        CancellationToken cancellationToken = default)
+    {
+        // For enrollment signature verification, we verify that the node
+        // has signed the nodeId with its private key.
+        // In a real implementation, you would use the public key to verify
+        // the signature of the nodeId.
+        try
+        {
+            // Simplified verification: check that signature is valid Base64
+            // In production, use proper Ed25519 signature verification
+            var signatureBytes = Convert.FromBase64String(signature);
+            var publicKeyBytes = Convert.FromBase64String(publicKey);
+
+            // For now, just verify that the signature is non-empty and valid Base64
+            // A real implementation would verify the actual cryptographic signature
+            var isValid = signatureBytes.Length > 0 && publicKeyBytes.Length > 0;
+
+            _logger.LogDebug(
+                "Signature verification for node {NodeId}: {Result}",
+                nodeId,
+                isValid ? "Valid" : "Invalid");
+
+            return Task.FromResult(isValid);
+        }
+        catch (FormatException)
+        {
+            _logger.LogWarning("Invalid Base64 format in signature or public key for node {NodeId}", nodeId);
+            return Task.FromResult(false);
+        }
+    }
+
+    /// <inheritdoc />
     public Task<CertificateValidation> ValidateCertificateAsync(
         string certificateData,
         CancellationToken cancellationToken = default)
@@ -197,7 +244,7 @@ public sealed class InMemoryNodeCredentialService : INodeCredentialService
         };
 
         var dataToVerify = JsonSerializer.Serialize(unsignedCert);
-        if (!VerifySignature(dataToVerify, certificate.Signature))
+        if (!VerifyServerSignature(dataToVerify, certificate.Signature))
         {
             return Task.FromResult(CertificateValidation.Invalid(
                 CertificateValidationError.InvalidSignature,
@@ -362,7 +409,7 @@ public sealed class InMemoryNodeCredentialService : INodeCredentialService
         return Convert.ToBase64String(hash);
     }
 
-    private bool VerifySignature(string data, string signature)
+    private bool VerifyServerSignature(string data, string signature)
     {
         if (_serverPrivateKey is null)
         {

@@ -165,6 +165,11 @@ public sealed record EnrollmentResult
     /// </summary>
     public NodeCertificate? Certificate { get; init; }
 
+    /// <summary>
+    /// Approved capabilities (if auto-approved).
+    /// </summary>
+    public IReadOnlyList<string>? ApprovedCapabilities { get; init; }
+
     public static EnrollmentResult Pending(string enrollmentId) => new()
     {
         Success = true,
@@ -172,12 +177,13 @@ public sealed record EnrollmentResult
         Status = EnrollmentStatus.Pending
     };
 
-    public static EnrollmentResult AutoApproved(string enrollmentId, NodeCertificate certificate) => new()
+    public static EnrollmentResult AutoApproved(string enrollmentId, NodeCertificate certificate, IReadOnlyList<string>? capabilities = null) => new()
     {
         Success = true,
         EnrollmentId = enrollmentId,
         Status = EnrollmentStatus.Approved,
-        Certificate = certificate
+        Certificate = certificate,
+        ApprovedCapabilities = capabilities ?? certificate.Capabilities
     };
 
     public static EnrollmentResult Failed(string error) => new()
@@ -317,6 +323,11 @@ public sealed record EnrollmentStatusResult
     /// Estimated wait time for pending enrollments.
     /// </summary>
     public TimeSpan? EstimatedWaitTime { get; init; }
+
+    /// <summary>
+    /// Approved capabilities (if approved).
+    /// </summary>
+    public IReadOnlyList<string>? ApprovedCapabilities { get; init; }
 }
 
 /// <summary>

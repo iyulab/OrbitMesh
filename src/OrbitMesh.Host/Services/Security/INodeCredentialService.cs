@@ -42,6 +42,35 @@ public interface INodeCredentialService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Issues a certificate for an approved node (simplified version).
+    /// </summary>
+    /// <param name="nodeId">Node ID.</param>
+    /// <param name="publicKey">Node's public key (Base64).</param>
+    /// <param name="capabilities">Granted capabilities.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Issued certificate.</returns>
+    Task<NodeCertificate> IssueCertificateAsync(
+        string nodeId,
+        string publicKey,
+        IReadOnlyList<string> capabilities,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Verifies a signature made by a node's public key.
+    /// Used for validating enrollment request signatures.
+    /// </summary>
+    /// <param name="nodeId">Node ID (used as signing context).</param>
+    /// <param name="publicKey">Base64-encoded public key.</param>
+    /// <param name="signature">Base64-encoded signature to verify.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if signature is valid.</returns>
+    Task<bool> VerifySignatureAsync(
+        string nodeId,
+        string publicKey,
+        string signature,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Validates a node certificate.
     /// </summary>
     /// <param name="certificateData">Base64-encoded certificate.</param>
