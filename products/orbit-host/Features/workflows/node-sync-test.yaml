@@ -1,0 +1,74 @@
+# Node-to-Node File Sync Test Workflow
+# Synchronizes files between node1 (D:/node1) and node2 (D:/node2)
+
+id: test:node-sync
+name: Node-to-Node File Sync Test
+version: "1.0.0"
+description: |
+  Test workflow for bidirectional file synchronization between two local nodes.
+  node1 (D:/node1) <-> Server (D:/sync-hub) <-> node2 (D:/node2)
+enabled: true
+
+tags:
+  - test
+  - sync
+  - file
+
+triggers:
+  # Manual trigger to start file watch on both nodes
+  - id: setup-watches
+    type: manual
+    name: Setup File Watches
+    input_schema:
+      node1_path:
+        type: string
+        default: "D:/node1"
+      node2_path:
+        type: string
+        default: "D:/node2"
+
+  # Manual trigger for full sync
+  - id: full-sync
+    type: manual
+    name: Full Sync All Nodes
+
+steps:
+  # Step 1: Start file watch on node1
+  - id: start-watch-node1
+    name: Start File Watch on Node1
+    type: job
+    command: orbit:filewatch:start
+    pattern: "node1"
+    payload:
+      watchId: "sync-node1"
+      path: "${input.node1_path ?? 'D:/node1'}"
+      filter: "*"
+      includeSubdirectories: true
+      debounceMs: 500
+    output_variable: watch1Result
+
+  # Step 2: Start file watch on node2
+  - id: start-watch-node2
+    name: Start File Watch on Node2
+    type: job
+    command: orbit:filewatch:start
+    pattern: "node2"
+    payload:
+      watchId: "sync-node2"
+      path: "${input.node2_path ?? 'D:/node2'}"
+      filter: "*"
+      includeSubdirectories: true
+      debounceMs: 500
+    output_variable: watch2Result
+
+  # Step 3: Report setup status
+  - id: report-setup
+    name: Report Setup Status
+    type: script
+    language: javascript
+    script: |
+      return {
+        node1Watch: context.watch1Result,
+        node2Watch: context.watch2Result,
+        message: "File watches configured on both nodes"
+      };

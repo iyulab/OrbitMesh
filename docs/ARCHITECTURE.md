@@ -333,37 +333,62 @@ OrbitMesh/
 
 ## Security Model
 
-### Authentication Flow
+### TOFU Authentication (Trust On First Use)
+
+OrbitMesh uses a certificate-based authentication system with admin approval workflow.
 
 ```
-┌────────┐                    ┌────────┐                    ┌────────┐
-│ Agent  │                    │ Server │                    │  Auth  │
-└───┬────┘                    └───┬────┘                    └───┬────┘
-    │                             │                             │
-    │  1. Request Token           │                             │
-    │  (AgentId, Secret)          │                             │
-    │ ───────────────────────────►│                             │
-    │                             │  2. Validate                │
-    │                             │ ───────────────────────────►│
-    │                             │                             │
-    │                             │  3. Generate JWT            │
-    │                             │ ◄───────────────────────────│
-    │  4. Access Token (15min)    │                             │
-    │     Refresh Token (7d)      │                             │
-    │ ◄───────────────────────────│                             │
-    │                             │                             │
-    │  5. Connect SignalR         │                             │
-    │  (Bearer Token in Query)    │                             │
-    │ ───────────────────────────►│                             │
-    │                             │                             │
+┌─────────────────────────────────────────────────────────────────────┐
+│                    INITIAL ENROLLMENT FLOW                          │
+├─────────────────────────────────────────────────────────────────────┤
+│   Admin              Server                     Node                │
+│     │                  │                         │                  │
+│     │ 1. Create Bootstrap Token                 │                  │
+│     │ ─────────────────>│                        │                  │
+│     │<─────────────────│ (one-time token)       │                  │
+│     │                  │                         │                  │
+│     │ 2. Provide to Node (out-of-band)          │                  │
+│     │ ───────────────────────────────────────────>                  │
+│     │                  │                         │                  │
+│     │                  │ 3. Connect + Enroll    │                  │
+│     │                  │<────────────────────────│                  │
+│     │                  │                         │                  │
+│     │ 4. Approve/Reject│                        │                  │
+│     │ ─────────────────>│                        │                  │
+│     │                  │ 5. Issue Certificate   │                  │
+│     │                  │─────────────────────────>                  │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                    SUBSEQUENT CONNECTIONS                           │
+├─────────────────────────────────────────────────────────────────────┤
+│   Node                                          Server              │
+│     │  1. Connect with Certificate               │                  │
+│     │ ──────────────────────────────────────────>│                  │
+│     │                                            │ 2. Verify cert   │
+│     │                                            │    + challenge   │
+│     │  3. Sign challenge response                │                  │
+│     │ <──────────────────────────────────────────│                  │
+│     │ ──────────────────────────────────────────>│                  │
+│     │  4. Connection established                 │                  │
+│     │ <──────────────────────────────────────────│                  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+### Security Components
+
+| Component | Interface | Description |
+|-----------|-----------|-------------|
+| **Bootstrap Tokens** | `IBootstrapTokenService` | One-time enrollment tokens |
+| **Enrollment** | `INodeEnrollmentService` | Admin approval workflow |
+| **Credentials** | `INodeCredentialService` | Certificate issuance/validation |
 
 ### Security Layers
 
 1. **Transport**: TLS 1.3 (HTTPS/WSS)
-2. **Authentication**: JWT Bearer Token
-3. **Authorization**: Role/Capability-based
-4. **Network**: mTLS for service-to-service (optional)
+2. **Authentication**: Certificate-based (TOFU model)
+3. **Authorization**: Capability-based (granted at approval)
+4. **Network**: Challenge-response for connection verification
 
 ## Scalability
 
