@@ -55,6 +55,14 @@ internal static class BuiltInFeatureExtensions
         if (options.FileSync?.Enabled == true)
         {
             builder.AddFileStorage(options.FileSync.RootPath);
+
+            // Add file sync service for server-to-agent synchronization
+            builder.AddFileSync(options.FileSync.RootPath, o =>
+            {
+                o.WatchEnabled = options.FileSync.WatchEnabled;
+                o.WatchPattern = options.FileSync.WatchPattern;
+                o.DebounceMs = options.FileSync.DebounceMs;
+            });
         }
 
         return builder;

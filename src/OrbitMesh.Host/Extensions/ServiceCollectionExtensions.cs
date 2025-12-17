@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using OrbitMesh.Host.Hubs;
@@ -227,6 +228,92 @@ public sealed class OrbitMeshServerBuilder
     }
 
     /// <summary>
+    /// Adds file sync services for bidirectional server-agent file synchronization.
+    /// </summary>
+    /// <param name="storageRootPath">Root path for file storage.</param>
+    /// <param name="configure">Optional configuration action for file sync options.</param>
+    /// <returns>The builder for chaining.</returns>
+    public OrbitMeshServerBuilder AddFileSync(string storageRootPath, Action<FileSyncServiceOptions>? configure = null)
+    {
+        var options = new FileSyncServiceOptions();
+        configure?.Invoke(options);
+
+        // Ensure file storage is registered
+        var hasStorage = _services.Any(d => d.ServiceType == typeof(IFileStorageService));
+        if (!hasStorage)
+        {
+            AddFileStorage(storageRootPath);
+        }
+
+        // Register server file watcher
+        _services.AddSingleton<IServerFileWatcherService>(sp =>
+            new ServerFileWatcherService(
+                storageRootPath,
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<ServerFileWatcherService>>(),
+                options.DebounceMs));
+
+        // Register file sync service
+        _services.AddSingleton<FileSyncOptions>(new FileSyncOptions
+        {
+            ServerUrl = options.ServerUrl,
+            AgentSyncPath = options.AgentSyncPath,
+            WatchEnabled = options.WatchEnabled,
+            WatchPath = options.WatchPath,
+            WatchPattern = options.WatchPattern,
+            IncludeSubdirectories = options.IncludeSubdirectories,
+            DeleteOrphans = options.DeleteOrphans,
+            DebounceMs = options.DebounceMs
+        });
+
+        _services.AddSingleton<IFileSyncService, FileSyncService>();
+        _services.AddHostedService<FileSyncService>(sp => (FileSyncService)sp.GetRequiredService<IFileSyncService>());
+
+        return this;
+    }
+
+    /// <summary>
+    /// Adds file sync services with configuration from IConfiguration.
+    /// </summary>
+    /// <param name="configuration">The configuration section.</param>
+    /// <returns>The builder for chaining.</returns>
+    public OrbitMeshServerBuilder AddFileSync(Microsoft.Extensions.Configuration.IConfiguration configuration)
+    {
+        var storageSection = configuration.GetSection("OrbitMesh:FileStorage");
+        var syncSection = configuration.GetSection("OrbitMesh:Features:FileSync");
+
+        var storageRootPath = storageSection["RootPath"] ?? "./files";
+        var options = new FileSyncServiceOptions
+        {
+            Enabled = syncSection.GetValue<bool>("Enabled"),
+            ServerUrl = syncSection["ServerUrl"] ?? "http://localhost:5000",
+            AgentSyncPath = syncSection["AgentSyncPath"] ?? ".",
+            WatchEnabled = syncSection.GetValue("WatchEnabled", true),
+            WatchPath = syncSection["WatchPath"] ?? ".",
+            WatchPattern = syncSection["WatchPattern"] ?? "*.*",
+            IncludeSubdirectories = syncSection.GetValue("IncludeSubdirectories", true),
+            DeleteOrphans = syncSection.GetValue("DeleteOrphans", false),
+            DebounceMs = syncSection.GetValue("DebounceMs", 500)
+        };
+
+        if (options.Enabled)
+        {
+            return AddFileSync(storageRootPath, o =>
+            {
+                o.ServerUrl = options.ServerUrl;
+                o.AgentSyncPath = options.AgentSyncPath;
+                o.WatchEnabled = options.WatchEnabled;
+                o.WatchPath = options.WatchPath;
+                o.WatchPattern = options.WatchPattern;
+                o.IncludeSubdirectories = options.IncludeSubdirectories;
+                o.DeleteOrphans = options.DeleteOrphans;
+                o.DebounceMs = options.DebounceMs;
+            });
+        }
+
+        return this;
+    }
+
+    /// <summary>
     /// Adds workflow engine integration to the server.
     /// </summary>
     /// <returns>The builder for chaining.</returns>
@@ -304,6 +391,63 @@ public sealed class FileStorageOptions
     /// Gets or sets the root path for file storage.
     /// </summary>
     public string RootPath { get; set; } = "./storage";
+
+    /// <summary>
+    /// Gets or sets the maximum file size in bytes.
+    /// </summary>
+    public long MaxFileSize { get; set; } = 100 * 1024 * 1024; // 100MB
+}
+
+/// <summary>
+/// Options for file sync configuration.
+/// </summary>
+[SuppressMessage("Design", "CA1056:URI-like properties should not be strings", Justification = "Configuration property")]
+public sealed class FileSyncServiceOptions
+{
+    /// <summary>
+    /// Gets or sets whether file sync is enabled.
+    /// </summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>
+    /// Gets or sets the server base URL for file API.
+    /// </summary>
+    public string ServerUrl { get; set; } = "http://localhost:5000";
+
+    /// <summary>
+    /// Gets or sets the path on agents where files should be synced to.
+    /// </summary>
+    public string AgentSyncPath { get; set; } = ".";
+
+    /// <summary>
+    /// Gets or sets whether to watch for server file changes.
+    /// </summary>
+    public bool WatchEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the path to watch on server (relative to storage root).
+    /// </summary>
+    public string WatchPath { get; set; } = ".";
+
+    /// <summary>
+    /// Gets or sets the file pattern to watch.
+    /// </summary>
+    public string WatchPattern { get; set; } = "*.*";
+
+    /// <summary>
+    /// Gets or sets whether to include subdirectories in watch.
+    /// </summary>
+    public bool IncludeSubdirectories { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets whether to delete files on target that don't exist on source.
+    /// </summary>
+    public bool DeleteOrphans { get; set; }
+
+    /// <summary>
+    /// Gets or sets the debounce delay in milliseconds.
+    /// </summary>
+    public int DebounceMs { get; set; } = 500;
 }
 
 /// <summary>

@@ -14,15 +14,20 @@ namespace OrbitMesh.Host.Controllers;
 public class FilesController : ControllerBase
 {
     private readonly IFileStorageService _storageService;
+    private readonly IFileSyncService? _syncService;
     private readonly ILogger<FilesController> _logger;
 
     /// <summary>
     /// Creates a new files controller.
     /// </summary>
-    public FilesController(IFileStorageService storageService, ILogger<FilesController> logger)
+    public FilesController(
+        IFileStorageService storageService,
+        ILogger<FilesController> logger,
+        IFileSyncService? syncService = null)
     {
         _storageService = storageService;
         _logger = logger;
+        _syncService = syncService;
     }
 
     /// <summary>
@@ -32,6 +37,8 @@ public class FilesController : ControllerBase
     /// <param name="file">The file to upload.</param>
     /// <param name="overwrite">Whether to overwrite existing files.</param>
     /// <param name="checksum">Optional checksum for verification.</param>
+    /// <param name="sourceAgentId">Optional source agent ID for sync propagation.</param>
+    /// <param name="propagate">Whether to propagate the file to other agents.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Upload result with file metadata.</returns>
     [HttpPost("upload")]
@@ -44,6 +51,8 @@ public class FilesController : ControllerBase
         IFormFile file,
         [FromForm] bool overwrite = true,
         [FromForm] string? checksum = null,
+        [FromForm] string? sourceAgentId = null,
+        [FromForm] bool propagate = true,
         CancellationToken cancellationToken = default)
     {
         if (file == null || file.Length == 0)
@@ -56,8 +65,8 @@ public class FilesController : ControllerBase
             return BadRequest(new { Error = "Path is required" });
         }
 
-        _logger.LogInformation("Receiving file upload: {FileName} ({Size} bytes) to {Path}",
-            file.FileName, file.Length, path);
+        _logger.LogInformation("Receiving file upload: {FileName} ({Size} bytes) to {Path} from agent {AgentId}",
+            file.FileName, file.Length, path, sourceAgentId ?? "unknown");
 
         try
         {
@@ -73,6 +82,26 @@ public class FilesController : ControllerBase
                 return result.Error?.Contains("already exists", StringComparison.OrdinalIgnoreCase) == true
                     ? Conflict(new { Error = result.Error })
                     : BadRequest(new { Error = result.Error });
+            }
+
+            // Trigger sync propagation to other agents if enabled
+            if (propagate && _syncService != null && !string.IsNullOrEmpty(sourceAgentId))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _syncService.PropagateFromAgentAsync(
+                            sourceAgentId,
+                            path,
+                            overwrite ? "Modified" : "Created",
+                            CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to propagate file upload to other agents: {Path}", path);
+                    }
+                }, CancellationToken.None);
             }
 
             return Ok(new FileUploadResponse
@@ -208,6 +237,8 @@ public class FilesController : ControllerBase
     /// Deletes a file from storage.
     /// </summary>
     /// <param name="path">File path within storage.</param>
+    /// <param name="sourceAgentId">Optional source agent ID for sync propagation.</param>
+    /// <param name="propagate">Whether to propagate the deletion to other agents.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Delete result.</returns>
     [HttpDelete]
@@ -215,12 +246,17 @@ public class FilesController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Delete(
         [FromQuery] string path,
+        [FromQuery] string? sourceAgentId = null,
+        [FromQuery] bool propagate = true,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
             return BadRequest(new { Error = "Path is required" });
         }
+
+        _logger.LogInformation("Deleting file: {Path} from agent {AgentId}",
+            path, sourceAgentId ?? "unknown");
 
         try
         {
@@ -229,6 +265,26 @@ public class FilesController : ControllerBase
             if (!success)
             {
                 return NotFound(new { Error = "File not found" });
+            }
+
+            // Trigger sync propagation to other agents if enabled
+            if (propagate && _syncService != null && !string.IsNullOrEmpty(sourceAgentId))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _syncService.PropagateFromAgentAsync(
+                            sourceAgentId,
+                            path,
+                            "Deleted",
+                            CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to propagate file deletion to other agents: {Path}", path);
+                    }
+                }, CancellationToken.None);
             }
 
             return Ok(new { Success = true });
