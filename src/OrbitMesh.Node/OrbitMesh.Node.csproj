@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\OrbitMesh.Core\OrbitMesh.Core.csproj" />
+    <ProjectReference Include="..\OrbitMesh.Transport.P2P\OrbitMesh.Transport.P2P.csproj" />
   </ItemGroup>
 
 </Project>

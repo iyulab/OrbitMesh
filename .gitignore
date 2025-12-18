@@ -111,5 +111,7 @@ claude-docs/
 local-docs/
 research-docs/
 nul
+CLAUDE.md
+
 # Auto-generated files
 **/routeTree.gen.ts

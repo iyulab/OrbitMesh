@@ -37,6 +37,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "orbit-host", "products\orbi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "orbit-node", "products\orbit-node\orbit-node.csproj", "{5A69A02A-ED29-4947-9FDF-B130EDC69A20}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OrbitMesh.Transport.P2P", "src\OrbitMesh.Transport.P2P\OrbitMesh.Transport.P2P.csproj", "{7064ED30-12FF-4714-ACE0-5EFB04536228}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -215,6 +217,18 @@ Global
 		{5A69A02A-ED29-4947-9FDF-B130EDC69A20}.Release|x64.Build.0 = Release|Any CPU
 		{5A69A02A-ED29-4947-9FDF-B130EDC69A20}.Release|x86.ActiveCfg = Release|Any CPU
 		{5A69A02A-ED29-4947-9FDF-B130EDC69A20}.Release|x86.Build.0 = Release|Any CPU
+		{7064ED30-12FF-4714-ACE0-5EFB04536228}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7064ED30-12FF-4714-ACE0-5EFB04536228}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7064ED30-12FF-4714-ACE0-5EFB04536228}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7064ED30-12FF-4714-ACE0-5EFB04536228}.Debug|x64.Build.0 = Debug|Any CPU
+		{7064ED30-12FF-4714-ACE0-5EFB04536228}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{7064ED30-12FF-4714-ACE0-5EFB04536228}.Debug|x86.Build.0 = Debug|Any CPU
+		{7064ED30-12FF-4714-ACE0-5EFB04536228}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7064ED30-12FF-4714-ACE0-5EFB04536228}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7064ED30-12FF-4714-ACE0-5EFB04536228}.Release|x64.ActiveCfg = Release|Any CPU
+		{7064ED30-12FF-4714-ACE0-5EFB04536228}.Release|x64.Build.0 = Release|Any CPU
+		{7064ED30-12FF-4714-ACE0-5EFB04536228}.Release|x86.ActiveCfg = Release|Any CPU
+		{7064ED30-12FF-4714-ACE0-5EFB04536228}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -234,5 +248,6 @@ Global
 		{B84297C2-6F94-4994-A192-F0C34DCEE92C} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{8AD16038-274D-45BC-8D94-B9B511D6C480} = {91DB166F-8FA8-D710-9FF9-784B929F57E0}
 		{5A69A02A-ED29-4947-9FDF-B130EDC69A20} = {91DB166F-8FA8-D710-9FF9-784B929F57E0}
+		{7064ED30-12FF-4714-ACE0-5EFB04536228} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal
