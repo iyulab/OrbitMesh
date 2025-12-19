@@ -275,9 +275,14 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
     {
         var now = DateTimeOffset.UtcNow;
 
-        var expiredEnrollments = await _dbContext.Enrollments
-            .Where(e => e.ExpiresAt < now && e.Status == (int)EnrollmentStatus.Pending)
+        // SQLite DateTimeOffset comparison requires client-side evaluation
+        var pendingEnrollments = await _dbContext.Enrollments
+            .Where(e => e.Status == (int)EnrollmentStatus.Pending)
             .ToListAsync(cancellationToken);
+
+        var expiredEnrollments = pendingEnrollments
+            .Where(e => e.ExpiresAt < now)
+            .ToList();
 
         if (expiredEnrollments.Count == 0)
         {

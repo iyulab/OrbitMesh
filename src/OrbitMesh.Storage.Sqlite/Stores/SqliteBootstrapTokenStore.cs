@@ -145,12 +145,17 @@ public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
     {
         var now = DateTimeOffset.UtcNow;
 
+        // SQLite DateTimeOffset comparison requires client-side evaluation
         var entities = await _dbContext.BootstrapTokens
-            .Where(t => !t.IsConsumed && t.ExpiresAt > now)
-            .OrderByDescending(t => t.CreatedAt)
+            .AsNoTracking()
             .ToListAsync(cancellationToken);
 
-        return entities.Select(e => new BootstrapToken
+        var filtered = entities
+            .Where(t => !t.IsConsumed && t.ExpiresAt > now)
+            .OrderByDescending(t => t.CreatedAt)
+            .ToList();
+
+        return filtered.Select(e => new BootstrapToken
         {
             Id = e.Id,
             Token = null, // Never expose
@@ -201,9 +206,13 @@ public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
     {
         var now = DateTimeOffset.UtcNow;
 
-        var expiredTokens = await _dbContext.BootstrapTokens
-            .Where(t => t.ExpiresAt < now || t.IsConsumed)
+        // SQLite DateTimeOffset comparison requires client-side evaluation
+        var allTokens = await _dbContext.BootstrapTokens
             .ToListAsync(cancellationToken);
+
+        var expiredTokens = allTokens
+            .Where(t => t.ExpiresAt < now || t.IsConsumed)
+            .ToList();
 
         if (expiredTokens.Count == 0)
         {

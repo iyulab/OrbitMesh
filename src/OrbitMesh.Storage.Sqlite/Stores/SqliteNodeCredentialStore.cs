@@ -436,12 +436,17 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
     {
         var now = DateTimeOffset.UtcNow;
 
-        var entities = await _dbContext.NodeCertificates
-            .Where(c => !c.IsRevoked && c.ExpiresAt > now)
-            .OrderBy(c => c.NodeName)
+        // SQLite DateTimeOffset comparison requires client-side evaluation
+        var allCerts = await _dbContext.NodeCertificates
+            .AsNoTracking()
             .ToListAsync(cancellationToken);
 
-        return entities.Select(MapToCertificate).ToList();
+        var filtered = allCerts
+            .Where(c => !c.IsRevoked && c.ExpiresAt > now)
+            .OrderBy(c => c.NodeName)
+            .ToList();
+
+        return filtered.Select(MapToCertificate).ToList();
     }
 
     /// <inheritdoc />
@@ -452,12 +457,17 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
         var now = DateTimeOffset.UtcNow;
         var threshold = now.AddDays(days);
 
-        var entities = await _dbContext.NodeCertificates
-            .Where(c => !c.IsRevoked && c.ExpiresAt > now && c.ExpiresAt <= threshold)
-            .OrderBy(c => c.ExpiresAt)
+        // SQLite DateTimeOffset comparison requires client-side evaluation
+        var allCerts = await _dbContext.NodeCertificates
+            .AsNoTracking()
             .ToListAsync(cancellationToken);
 
-        return entities.Select(MapToCertificate).ToList();
+        var filtered = allCerts
+            .Where(c => !c.IsRevoked && c.ExpiresAt > now && c.ExpiresAt <= threshold)
+            .OrderBy(c => c.ExpiresAt)
+            .ToList();
+
+        return filtered.Select(MapToCertificate).ToList();
     }
 
     private NodeCertificate MapToCertificate(NodeCertificateEntity entity)
