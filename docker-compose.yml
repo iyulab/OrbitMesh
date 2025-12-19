@@ -1,5 +1,14 @@
 # OrbitMesh Docker Compose Configuration
 # For production deployment using GitHub Container Registry images
+#
+# REQUIRED: Set admin password before starting
+#   Option 1: Create .env file with ORBITMESH_ADMIN_PASSWORD=your-password
+#   Option 2: Export environment variable: export ORBITMESH_ADMIN_PASSWORD=your-password
+#   Option 3: Inline: ORBITMESH_ADMIN_PASSWORD=your-password docker compose up -d
+#
+# Quick Start:
+#   echo "ORBITMESH_ADMIN_PASSWORD=changeme" > .env
+#   docker compose up -d
 
 services:
   # OrbitMesh Server
@@ -12,14 +21,13 @@ services:
       # Data persistence (SQLite database)
       - orbitmesh-data:/app/data
       # Optional: Custom configuration
-      - ./config/appsettings.json:/app/appsettings.json:ro
+      # - ./config/appsettings.json:/app/appsettings.json:ro
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:5000
       - ConnectionStrings__OrbitMesh=Data Source=/app/data/orbitmesh.db
-      # Admin password (required for admin console)
-      - ORBITMESH_ADMIN_PASSWORD=${ORBITMESH_ADMIN_PASSWORD:-}
-      # Or use config file: OrbitMesh__AdminPassword
+      # Admin password - REQUIRED (will error if not set)
+      - ORBITMESH_ADMIN_PASSWORD=${ORBITMESH_ADMIN_PASSWORD:?Error: ORBITMESH_ADMIN_PASSWORD is required. Set it in .env file or export it.}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s

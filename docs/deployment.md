@@ -4,7 +4,7 @@ This guide covers deploying OrbitMesh using Docker Compose with automatic update
 
 ## Quick Start
 
-### 1. Pull and Run
+### 1. Download Configuration
 
 ```bash
 # Create project directory
@@ -13,40 +13,34 @@ mkdir orbitmesh && cd orbitmesh
 # Download docker-compose.yml
 curl -O https://raw.githubusercontent.com/iyulab/OrbitMesh/main/docker-compose.yml
 
-# Create config directory
-mkdir -p config
+# Download environment template
+curl -O https://raw.githubusercontent.com/iyulab/OrbitMesh/main/.env.example
+```
 
-# Start services
+### 2. Set Admin Password (Required)
+
+```bash
+# Copy template and set password
+cp .env.example .env
+
+# Edit .env and set ORBITMESH_ADMIN_PASSWORD
+nano .env
+```
+
+Or quick setup:
+```bash
+echo "ORBITMESH_ADMIN_PASSWORD=your-secure-password" > .env
+```
+
+> **Note**: Docker Compose will fail to start if `ORBITMESH_ADMIN_PASSWORD` is not set.
+
+### 3. Start Services
+
+```bash
 docker compose up -d
 ```
 
-### 2. Set Admin Password
-
-Choose one method:
-
-**Option A: Environment Variable (Recommended for Docker)**
-```bash
-# Create .env file
-echo "ORBITMESH_ADMIN_PASSWORD=your-secure-password" > .env
-
-# Or set directly in docker-compose.yml
-environment:
-  - ORBITMESH_ADMIN_PASSWORD=your-secure-password
-```
-
-**Option B: Configuration File**
-```bash
-# Create config/appsettings.json
-cat > config/appsettings.json << 'EOF'
-{
-  "OrbitMesh": {
-    "AdminPassword": "your-secure-password"
-  }
-}
-EOF
-```
-
-### 3. Access the Dashboard
+### 4. Access the Dashboard
 
 Open http://localhost:5000 in your browser.
 
