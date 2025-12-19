@@ -10,17 +10,18 @@ namespace OrbitMesh.Storage.Sqlite.Stores;
 
 /// <summary>
 /// SQLite-backed implementation of bootstrap token service.
+/// Uses IDbContextFactory for proper scoping with SignalR hubs.
 /// </summary>
 public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
 {
-    private readonly OrbitMeshDbContext _dbContext;
+    private readonly IDbContextFactory<OrbitMeshDbContext> _contextFactory;
     private readonly ILogger<SqliteBootstrapTokenStore> _logger;
 
     public SqliteBootstrapTokenStore(
-        OrbitMeshDbContext dbContext,
+        IDbContextFactory<OrbitMeshDbContext> contextFactory,
         ILogger<SqliteBootstrapTokenStore> logger)
     {
-        _dbContext = dbContext;
+        _contextFactory = contextFactory;
         _logger = logger;
     }
 
@@ -48,8 +49,9 @@ public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
             AutoApprove = request.AutoApprove
         };
 
-        _dbContext.BootstrapTokens.Add(entity);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        dbContext.BootstrapTokens.Add(entity);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
             "Bootstrap token created. TokenId: {TokenId}, ExpiresAt: {ExpiresAt}, AutoApprove: {AutoApprove}",
@@ -79,12 +81,14 @@ public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
         var tokenHash = HashToken(token);
         var now = DateTimeOffset.UtcNow;
 
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
         // Find token by hash using a transaction for atomicity
-        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
         try
         {
-            var entity = await _dbContext.BootstrapTokens
+            var entity = await dbContext.BootstrapTokens
                 .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, cancellationToken);
 
             if (entity is null)
@@ -113,7 +117,7 @@ public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
             entity.IsConsumed = true;
             entity.ConsumedAt = now;
 
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
 
             _logger.LogInformation(
@@ -145,8 +149,10 @@ public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
     {
         var now = DateTimeOffset.UtcNow;
 
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
         // SQLite DateTimeOffset comparison requires client-side evaluation
-        var entities = await _dbContext.BootstrapTokens
+        var entities = await dbContext.BootstrapTokens
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
@@ -178,7 +184,9 @@ public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
         string tokenId,
         CancellationToken cancellationToken = default)
     {
-        var entity = await _dbContext.BootstrapTokens
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var entity = await dbContext.BootstrapTokens
             .FirstOrDefaultAsync(t => t.Id == tokenId, cancellationToken);
 
         if (entity is null)
@@ -194,8 +202,8 @@ public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
             return false;
         }
 
-        _dbContext.BootstrapTokens.Remove(entity);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        dbContext.BootstrapTokens.Remove(entity);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("Bootstrap token revoked. TokenId: {TokenId}", tokenId);
         return true;
@@ -206,8 +214,10 @@ public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
     {
         var now = DateTimeOffset.UtcNow;
 
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
         // SQLite DateTimeOffset comparison requires client-side evaluation
-        var allTokens = await _dbContext.BootstrapTokens
+        var allTokens = await dbContext.BootstrapTokens
             .ToListAsync(cancellationToken);
 
         var expiredTokens = allTokens
@@ -219,8 +229,8 @@ public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
             return 0;
         }
 
-        _dbContext.BootstrapTokens.RemoveRange(expiredTokens);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        dbContext.BootstrapTokens.RemoveRange(expiredTokens);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("Cleaned up {Count} expired/consumed bootstrap tokens", expiredTokens.Count);
         return expiredTokens.Count;
@@ -231,13 +241,15 @@ public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
     /// </summary>
     public async Task MarkConsumedByNodeAsync(string tokenId, string nodeId, CancellationToken cancellationToken = default)
     {
-        var entity = await _dbContext.BootstrapTokens
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var entity = await dbContext.BootstrapTokens
             .FirstOrDefaultAsync(t => t.Id == tokenId, cancellationToken);
 
         if (entity is not null)
         {
             entity.ConsumedByNodeId = nodeId;
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await dbContext.SaveChangesAsync(cancellationToken);
         }
     }
 

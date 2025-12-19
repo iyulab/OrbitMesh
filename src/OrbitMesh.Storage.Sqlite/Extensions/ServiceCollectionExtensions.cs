@@ -55,8 +55,9 @@ public static class ServiceCollectionExtensions
             opt.EnableCoreStores = options.EnableCoreStores;
         });
 
-        // Register DbContext factory (always needed)
-        services.AddDbContextFactory<OrbitMeshDbContext>(dbOptions =>
+        // Register pooled DbContext factory for singleton services (like security stores)
+        // Pooled factory is designed for use from singleton services and SignalR hubs
+        services.AddPooledDbContextFactory<OrbitMeshDbContext>(dbOptions =>
         {
             dbOptions.UseSqlite(options.ConnectionString, sqliteOptions =>
             {
@@ -69,19 +70,9 @@ public static class ServiceCollectionExtensions
 #endif
         });
 
-        // Also register DbContext for scoped resolution
-        services.AddDbContext<OrbitMeshDbContext>(dbOptions =>
-        {
-            dbOptions.UseSqlite(options.ConnectionString, sqliteOptions =>
-            {
-                sqliteOptions.CommandTimeout(30);
-            });
-
-#if DEBUG
-            dbOptions.EnableSensitiveDataLogging();
-            dbOptions.EnableDetailedErrors();
-#endif
-        });
+        // Also register scoped DbContext resolved via the factory for any code that needs it
+        services.AddScoped(sp =>
+            sp.GetRequiredService<IDbContextFactory<OrbitMeshDbContext>>().CreateDbContext());
 
         // Register core storage (enabled by default)
         if (options.EnableCoreStores)
@@ -141,10 +132,12 @@ public static class ServiceCollectionExtensions
         RemoveExistingService<INodeEnrollmentService>(services);
         RemoveExistingService<INodeCredentialService>(services);
 
-        // Register SQLite-backed security stores
-        services.AddScoped<IBootstrapTokenService, SqliteBootstrapTokenStore>();
-        services.AddScoped<INodeCredentialService, SqliteNodeCredentialStore>();
-        services.AddScoped<INodeEnrollmentService, SqliteNodeEnrollmentStore>();
+        // Register SQLite-backed security stores as Singleton
+        // These stores use IDbContextFactory internally, so they can be safely
+        // registered as singletons and work correctly with SignalR hubs
+        services.AddSingleton<IBootstrapTokenService, SqliteBootstrapTokenStore>();
+        services.AddSingleton<INodeCredentialService, SqliteNodeCredentialStore>();
+        services.AddSingleton<INodeEnrollmentService, SqliteNodeEnrollmentStore>();
     }
 
     private static void RemoveExistingService<TService>(IServiceCollection services)

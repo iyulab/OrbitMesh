@@ -75,21 +75,15 @@ public interface IServerHub
     /// Called during initial connection with a bootstrap token.
     /// </summary>
     /// <param name="request">The enrollment request with node info and public key.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Enrollment result with status and optional certificate.</returns>
-    Task<NodeEnrollmentResult> RequestEnrollmentAsync(
-        NodeEnrollmentRequest request,
-        CancellationToken cancellationToken = default);
+    Task<NodeEnrollmentResult> RequestEnrollmentAsync(NodeEnrollmentRequest request);
 
     /// <summary>
     /// Checks the status of a pending enrollment.
     /// </summary>
     /// <param name="enrollmentId">The enrollment ID.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Current enrollment status.</returns>
-    Task<NodeEnrollmentResult> CheckEnrollmentStatusAsync(
-        string enrollmentId,
-        CancellationToken cancellationToken = default);
+    Task<NodeEnrollmentResult> CheckEnrollmentStatusAsync(string enrollmentId);
 }
 
 /// <summary>

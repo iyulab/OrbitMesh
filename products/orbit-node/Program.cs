@@ -35,6 +35,10 @@ try
         ?? builder.Configuration["ORBITMESH_TOKEN"]
         ?? string.Empty;
 
+    var bootstrapToken = builder.Configuration["OrbitMesh:BootstrapToken"]
+        ?? builder.Configuration["ORBITMESH_BOOTSTRAP_TOKEN"]
+        ?? string.Empty;
+
     var tags = builder.Configuration["OrbitMesh:Tags"]
         ?? builder.Configuration["AGENT_TAGS"]
         ?? string.Empty;
@@ -50,9 +54,13 @@ try
     {
         Log.Information("Using access token for authentication");
     }
+    else if (!string.IsNullOrEmpty(bootstrapToken))
+    {
+        Log.Information("Using bootstrap token for enrollment");
+    }
     else
     {
-        Log.Warning("No access token configured. Consider setting OrbitMesh:AccessToken or ORBITMESH_TOKEN for production.");
+        Log.Warning("No access token or bootstrap token configured. Set OrbitMesh:BootstrapToken for enrollment or OrbitMesh:AccessToken for production.");
     }
     if (!string.IsNullOrEmpty(tags))
     {
@@ -64,10 +72,14 @@ try
     {
         agent.WithName(agentName);
 
-        // Configure access token for authentication
+        // Configure authentication
         if (!string.IsNullOrEmpty(accessToken))
         {
             agent.WithAccessToken(accessToken);
+        }
+        else if (!string.IsNullOrEmpty(bootstrapToken))
+        {
+            agent.WithBootstrapToken(bootstrapToken);
         }
 
         // Add tags from configuration

@@ -85,6 +85,7 @@ $serverScript = Join-Path $tempDir "run-server.ps1"
 @"
 `$Host.UI.RawUI.WindowTitle = 'orbit-host'
 `$env:ASPNETCORE_ENVIRONMENT = 'Development'
+`$env:ORBITMESH_ADMIN_PASSWORD = 'admin'
 Write-Host 'Starting OrbitMesh Server (Development)...' -ForegroundColor Cyan
 dotnet run --project "$serverProject" --no-build
 "@ | Set-Content -Path $serverScript -Encoding UTF8

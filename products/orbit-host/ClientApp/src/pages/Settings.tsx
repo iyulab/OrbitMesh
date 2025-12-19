@@ -449,7 +449,7 @@ function CreateBootstrapTokenDialog({
               {/* Usage instructions */}
               <div className="mt-4 p-4 bg-slate-50 dark:bg-slate-900 rounded-lg space-y-3">
                 <p className="text-sm font-medium text-slate-900 dark:text-white">Agent connection command:</p>
-                <pre className="text-xs bg-slate-100 dark:bg-slate-800 p-3 rounded overflow-x-auto">
+                <pre className="text-xs bg-slate-100 dark:bg-slate-800 p-3 rounded overflow-x-auto whitespace-pre-wrap break-all">
 {`// C# Agent
 var agent = await MeshAgentBuilder
     .Create("${serverUrl}/agent")

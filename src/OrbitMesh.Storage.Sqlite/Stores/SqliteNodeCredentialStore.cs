@@ -10,11 +10,12 @@ namespace OrbitMesh.Storage.Sqlite.Stores;
 
 /// <summary>
 /// SQLite-backed implementation of node credential service.
+/// Uses IDbContextFactory for proper scoping with SignalR hubs.
 /// Uses Ed25519 (simulated via ECDSA/HMAC) for signing certificates.
 /// </summary>
 public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposable
 {
-    private readonly OrbitMeshDbContext _dbContext;
+    private readonly IDbContextFactory<OrbitMeshDbContext> _contextFactory;
     private readonly ILogger<SqliteNodeCredentialStore> _logger;
 
     // Cached server key info for performance
@@ -24,10 +25,10 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
     private bool _disposed;
 
     public SqliteNodeCredentialStore(
-        OrbitMeshDbContext dbContext,
+        IDbContextFactory<OrbitMeshDbContext> contextFactory,
         ILogger<SqliteNodeCredentialStore> logger)
     {
-        _dbContext = dbContext;
+        _contextFactory = contextFactory;
         _logger = logger;
     }
 
@@ -51,8 +52,10 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
         await _keyLock.WaitAsync(cancellationToken);
         try
         {
+            await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
             // Check if keys already exist in database
-            var existingKey = await _dbContext.ServerKeyInfos
+            var existingKey = await dbContext.ServerKeyInfos
                 .Where(k => k.IsActive)
                 .FirstOrDefaultAsync(cancellationToken);
 
@@ -91,8 +94,8 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
                 IsActive = true
             };
 
-            _dbContext.ServerKeyInfos.Add(entity);
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            dbContext.ServerKeyInfos.Add(entity);
+            await dbContext.SaveChangesAsync(cancellationToken);
 
             _cachedServerKeyInfo = new ServerKeyInfo
             {
@@ -120,8 +123,10 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
             return _cachedServerKeyInfo;
         }
 
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
         // Load from database
-        var entity = await _dbContext.ServerKeyInfos
+        var entity = await dbContext.ServerKeyInfos
             .Where(k => k.IsActive)
             .FirstOrDefaultAsync(cancellationToken)
             ?? throw new InvalidOperationException(
@@ -211,8 +216,9 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
             IsRevoked = false
         };
 
-        _dbContext.NodeCertificates.Add(entity);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        dbContext.NodeCertificates.Add(entity);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
             "Certificate issued. NodeId: {NodeId}, SerialNumber: {SerialNumber}, ExpiresAt: {ExpiresAt}",
@@ -294,7 +300,8 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
         }
 
         // Check revocation in database
-        var isRevoked = await _dbContext.NodeCertificates
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var isRevoked = await dbContext.NodeCertificates
             .AnyAsync(c => c.SerialNumber == certificate.SerialNumber && c.IsRevoked, cancellationToken);
 
         if (isRevoked)
@@ -340,7 +347,9 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
         string nodeId,
         CancellationToken cancellationToken = default)
     {
-        var entity = await _dbContext.NodeCertificates
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var entity = await dbContext.NodeCertificates
             .Where(c => c.NodeId == nodeId && !c.IsRevoked)
             .OrderByDescending(c => c.IssuedAt)
             .FirstOrDefaultAsync(cancellationToken);
@@ -381,7 +390,9 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
         string revokedBy,
         CancellationToken cancellationToken = default)
     {
-        var entity = await _dbContext.NodeCertificates
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var entity = await dbContext.NodeCertificates
             .Where(c => c.NodeId == nodeId && !c.IsRevoked)
             .OrderByDescending(c => c.IssuedAt)
             .FirstOrDefaultAsync(cancellationToken)
@@ -392,7 +403,7 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
         entity.RevocationReason = reason;
         entity.RevokedBy = revokedBy;
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.LogWarning(
             "Certificate revoked. NodeId: {NodeId}, SerialNumber: {SerialNumber}, Reason: {Reason}, RevokedBy: {RevokedBy}",
@@ -406,7 +417,9 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
     public async Task<IReadOnlyList<RevokedCertificate>> GetRevocationListAsync(
         CancellationToken cancellationToken = default)
     {
-        var entities = await _dbContext.NodeCertificates
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var entities = await dbContext.NodeCertificates
             .Where(c => c.IsRevoked)
             .OrderByDescending(c => c.RevokedAt)
             .ToListAsync(cancellationToken);
@@ -426,7 +439,9 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
         string serialNumber,
         CancellationToken cancellationToken = default)
     {
-        return await _dbContext.NodeCertificates
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        return await dbContext.NodeCertificates
             .AnyAsync(c => c.SerialNumber == serialNumber && c.IsRevoked, cancellationToken);
     }
 
@@ -436,8 +451,10 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
     {
         var now = DateTimeOffset.UtcNow;
 
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
         // SQLite DateTimeOffset comparison requires client-side evaluation
-        var allCerts = await _dbContext.NodeCertificates
+        var allCerts = await dbContext.NodeCertificates
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
@@ -457,8 +474,10 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
         var now = DateTimeOffset.UtcNow;
         var threshold = now.AddDays(days);
 
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
         // SQLite DateTimeOffset comparison requires client-side evaluation
-        var allCerts = await _dbContext.NodeCertificates
+        var allCerts = await dbContext.NodeCertificates
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
@@ -470,7 +489,7 @@ public sealed class SqliteNodeCredentialStore : INodeCredentialService, IDisposa
         return filtered.Select(MapToCertificate).ToList();
     }
 
-    private NodeCertificate MapToCertificate(NodeCertificateEntity entity)
+    private static NodeCertificate MapToCertificate(NodeCertificateEntity entity)
     {
         return new NodeCertificate
         {

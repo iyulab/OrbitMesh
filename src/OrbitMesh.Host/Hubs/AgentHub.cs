@@ -88,7 +88,7 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
         }
 
         // Extract authentication tokens from query string or header
-        var accessToken = httpContext.Request.Query["access_token"].FirstOrDefault()
+        var rawAccessToken = httpContext.Request.Query["access_token"].FirstOrDefault()
             ?? httpContext.Request.Headers.Authorization.FirstOrDefault()?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
         var bootstrapToken = httpContext.Request.Query["bootstrap_token"].FirstOrDefault()
             ?? httpContext.Request.Headers["X-Bootstrap-Token"].FirstOrDefault();
@@ -97,19 +97,39 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
         var certificate = httpContext.Request.Query["certificate"].FirstOrDefault()
             ?? httpContext.Request.Headers["X-Node-Certificate"].FirstOrDefault();
 
+        // Parse prefixed access tokens (from MeshAgentBuilder)
+        // Format: "cert:{certificate}" or "bootstrap:{token}"
+        string? accessToken = rawAccessToken;
+        if (!string.IsNullOrEmpty(rawAccessToken))
+        {
+            if (rawAccessToken.StartsWith("cert:", StringComparison.OrdinalIgnoreCase))
+            {
+                certificate ??= rawAccessToken[5..];
+                accessToken = null;
+            }
+            else if (rawAccessToken.StartsWith("bootstrap:", StringComparison.OrdinalIgnoreCase))
+            {
+                bootstrapToken ??= rawAccessToken[10..];
+                accessToken = null;
+            }
+        }
+
         // Priority 1: Certificate-based authentication (for enrolled nodes)
-        if (!string.IsNullOrEmpty(certificate) && !string.IsNullOrEmpty(nodeId))
+        if (!string.IsNullOrEmpty(certificate))
         {
             var validation = await _credentialService.ValidateCertificateAsync(certificate);
-            if (validation.IsValid && validation.NodeId == nodeId)
+            // NodeId can be provided separately or extracted from certificate
+            var effectiveNodeId = nodeId ?? validation.NodeId;
+
+            if (validation.IsValid && (nodeId is null || validation.NodeId == nodeId))
             {
-                Context.Items["NodeId"] = nodeId;
+                Context.Items["NodeId"] = effectiveNodeId;
                 Context.Items["AuthType"] = "Certificate";
                 Context.Items["IsEnrolled"] = true;
 
                 _logger.LogInformation(
                     "Node authenticated with certificate. NodeId: {NodeId}, ConnectionId: {ConnectionId}",
-                    nodeId,
+                    effectiveNodeId,
                     Context.ConnectionId);
 
                 await Groups.AddToGroupAsync(Context.ConnectionId, AllAgentsGroup);
@@ -119,7 +139,7 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
 
             _logger.LogWarning(
                 "Invalid certificate provided. NodeId: {NodeId}, ConnectionId: {ConnectionId}",
-                nodeId,
+                effectiveNodeId ?? "unknown",
                 Context.ConnectionId);
             Context.Abort();
             return;
@@ -429,13 +449,18 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
     }
 
     /// <inheritdoc />
-    public async Task<NodeEnrollmentResult> RequestEnrollmentAsync(
-        NodeEnrollmentRequest request,
-        CancellationToken cancellationToken = default)
+    public async Task<NodeEnrollmentResult> RequestEnrollmentAsync(NodeEnrollmentRequest request)
     {
+        // Use SignalR's built-in connection aborted token
+        var cancellationToken = Context.ConnectionAborted;
+
         // Verify the connection is authenticated with a bootstrap token
+        // Exception: Allow anonymous enrollment in development mode with auto-approve
         var authType = Context.Items["AuthType"] as string;
-        if (authType != "Bootstrap")
+        var allowAnonymousEnrollment = _securityOptions.AllowAnonymous
+            && _securityOptions.Enrollment.AutoApprove;
+
+        if (authType != "Bootstrap" && !allowAnonymousEnrollment)
         {
             _logger.LogWarning(
                 "Enrollment request rejected: Not authenticated with bootstrap token. ConnectionId: {ConnectionId}, AuthType: {AuthType}",
@@ -443,6 +468,13 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
                 authType ?? "None");
 
             return NodeEnrollmentResult.Failed("Enrollment requires a valid bootstrap token");
+        }
+
+        if (authType != "Bootstrap" && allowAnonymousEnrollment)
+        {
+            _logger.LogInformation(
+                "Anonymous enrollment allowed (development mode). ConnectionId: {ConnectionId}",
+                Context.ConnectionId);
         }
 
         try
@@ -539,10 +571,11 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
     }
 
     /// <inheritdoc />
-    public async Task<NodeEnrollmentResult> CheckEnrollmentStatusAsync(
-        string enrollmentId,
-        CancellationToken cancellationToken = default)
+    public async Task<NodeEnrollmentResult> CheckEnrollmentStatusAsync(string enrollmentId)
     {
+        // Use SignalR's built-in connection aborted token
+        var cancellationToken = Context.ConnectionAborted;
+
         try
         {
             _logger.LogDebug(

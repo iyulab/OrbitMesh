@@ -2,6 +2,7 @@ using System.Globalization;
 using OrbitMesh.Host.Authentication;
 using OrbitMesh.Host.Extensions;
 using OrbitMesh.Host.Features;
+using OrbitMesh.Host.Services.Security;
 using OrbitMesh.Storage.Sqlite.Extensions;
 using Serilog;
 
@@ -55,6 +56,10 @@ try
         });
     });
 
+    // Configure security options from configuration
+    builder.Services.Configure<SecurityOptions>(
+        builder.Configuration.GetSection(SecurityOptions.SectionName));
+
     // Add SQLite storage (for production persistence)
     var connectionString = builder.Configuration.GetConnectionString("OrbitMesh")
         ?? "Data Source=orbitmesh.db";
@@ -83,6 +88,9 @@ try
 
     // Build the app
     var app = builder.Build();
+
+    // Initialize storage (creates database and tables if needed)
+    await app.Services.InitializeOrbitMeshStorageAsync();
 
     // Configure request pipeline
     if (app.Environment.IsDevelopment())

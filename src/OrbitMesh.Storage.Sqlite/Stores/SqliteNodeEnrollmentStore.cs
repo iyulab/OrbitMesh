@@ -9,21 +9,22 @@ namespace OrbitMesh.Storage.Sqlite.Stores;
 
 /// <summary>
 /// SQLite-backed implementation of node enrollment service.
+/// Uses IDbContextFactory for proper scoping with SignalR hubs.
 /// </summary>
 public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
 {
-    private readonly OrbitMeshDbContext _dbContext;
+    private readonly IDbContextFactory<OrbitMeshDbContext> _contextFactory;
     private readonly INodeCredentialService _credentialService;
     private readonly SecurityOptions _options;
     private readonly ILogger<SqliteNodeEnrollmentStore> _logger;
 
     public SqliteNodeEnrollmentStore(
-        OrbitMeshDbContext dbContext,
+        IDbContextFactory<OrbitMeshDbContext> contextFactory,
         INodeCredentialService credentialService,
         IOptions<SecurityOptions> options,
         ILogger<SqliteNodeEnrollmentStore> logger)
     {
-        _dbContext = dbContext;
+        _contextFactory = contextFactory;
         _credentialService = credentialService;
         _options = options.Value;
         _logger = logger;
@@ -35,8 +36,10 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
         string bootstrapTokenId,
         CancellationToken cancellationToken = default)
     {
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
         // Check if node is blocked
-        if (await _dbContext.BlockedNodes.AnyAsync(b => b.NodeId == request.NodeId, cancellationToken))
+        if (await dbContext.BlockedNodes.AnyAsync(b => b.NodeId == request.NodeId, cancellationToken))
         {
             _logger.LogWarning(
                 "Enrollment rejected: Node is blocked. NodeId: {NodeId}",
@@ -45,7 +48,7 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
         }
 
         // Check for existing pending enrollment
-        var existingEnrollment = await _dbContext.Enrollments
+        var existingEnrollment = await dbContext.Enrollments
             .Where(e => e.NodeId == request.NodeId && e.Status == (int)EnrollmentStatus.Pending)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -80,8 +83,8 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
             BootstrapTokenId = bootstrapTokenId
         };
 
-        _dbContext.Enrollments.Add(entity);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        dbContext.Enrollments.Add(entity);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
             "Node enrollment requested. NodeId: {NodeId}, NodeName: {NodeName}, EnrollmentId: {EnrollmentId}",
@@ -112,7 +115,9 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
     public async Task<IReadOnlyList<PendingEnrollment>> GetPendingEnrollmentsAsync(
         CancellationToken cancellationToken = default)
     {
-        var entities = await _dbContext.Enrollments
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var entities = await dbContext.Enrollments
             .Where(e => e.Status == (int)EnrollmentStatus.Pending)
             .OrderBy(e => e.RequestedAt)
             .ToListAsync(cancellationToken);
@@ -125,7 +130,9 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
         string enrollmentId,
         CancellationToken cancellationToken = default)
     {
-        var entity = await _dbContext.Enrollments
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var entity = await dbContext.Enrollments
             .FirstOrDefaultAsync(e => e.EnrollmentId == enrollmentId, cancellationToken);
 
         return entity is null ? null : MapToPendingEnrollment(entity);
@@ -136,7 +143,9 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
         string enrollmentId,
         CancellationToken cancellationToken = default)
     {
-        var entity = await _dbContext.Enrollments
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var entity = await dbContext.Enrollments
             .FirstOrDefaultAsync(e => e.EnrollmentId == enrollmentId, cancellationToken);
 
         if (entity is null)
@@ -149,7 +158,7 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
             entity.ExpiresAt < DateTimeOffset.UtcNow)
         {
             entity.Status = (int)EnrollmentStatus.Expired;
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await dbContext.SaveChangesAsync(cancellationToken);
             return new EnrollmentStatusResult { Status = EnrollmentStatus.Expired };
         }
 
@@ -173,7 +182,9 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
         string approvedBy,
         CancellationToken cancellationToken = default)
     {
-        var entity = await _dbContext.Enrollments
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var entity = await dbContext.Enrollments
             .FirstOrDefaultAsync(e => e.EnrollmentId == enrollmentId, cancellationToken)
             ?? throw new InvalidOperationException($"Enrollment not found: {enrollmentId}");
 
@@ -201,7 +212,7 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
 
         // Update enrollment status
         entity.Status = (int)EnrollmentStatus.Approved;
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
             "Enrollment approved. EnrollmentId: {EnrollmentId}, NodeId: {NodeId}, ApprovedBy: {ApprovedBy}",
@@ -220,7 +231,9 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
         bool blockNode = false,
         CancellationToken cancellationToken = default)
     {
-        var entity = await _dbContext.Enrollments
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var entity = await dbContext.Enrollments
             .FirstOrDefaultAsync(e => e.EnrollmentId == enrollmentId, cancellationToken)
             ?? throw new InvalidOperationException($"Enrollment not found: {enrollmentId}");
 
@@ -244,7 +257,7 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
                 BlockedBy = rejectedBy
             };
 
-            _dbContext.BlockedNodes.Add(blockedNode);
+            dbContext.BlockedNodes.Add(blockedNode);
 
             _logger.LogWarning(
                 "Node blocked from future enrollments. NodeId: {NodeId}, BlockedBy: {BlockedBy}",
@@ -252,7 +265,7 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
                 rejectedBy);
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
             "Enrollment rejected. EnrollmentId: {EnrollmentId}, NodeId: {NodeId}, RejectedBy: {RejectedBy}, Reason: {Reason}",
@@ -267,7 +280,9 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
         string nodeId,
         CancellationToken cancellationToken = default)
     {
-        return await _dbContext.BlockedNodes.AnyAsync(b => b.NodeId == nodeId, cancellationToken);
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        return await dbContext.BlockedNodes.AnyAsync(b => b.NodeId == nodeId, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -275,8 +290,10 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
     {
         var now = DateTimeOffset.UtcNow;
 
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
         // SQLite DateTimeOffset comparison requires client-side evaluation
-        var pendingEnrollments = await _dbContext.Enrollments
+        var pendingEnrollments = await dbContext.Enrollments
             .Where(e => e.Status == (int)EnrollmentStatus.Pending)
             .ToListAsync(cancellationToken);
 
@@ -294,13 +311,13 @@ public sealed class SqliteNodeEnrollmentStore : INodeEnrollmentService
             enrollment.Status = (int)EnrollmentStatus.Expired;
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("Marked {Count} enrollments as expired", expiredEnrollments.Count);
         return expiredEnrollments.Count;
     }
 
-    private PendingEnrollment MapToPendingEnrollment(EnrollmentEntity entity)
+    private static PendingEnrollment MapToPendingEnrollment(EnrollmentEntity entity)
     {
         return new PendingEnrollment
         {
