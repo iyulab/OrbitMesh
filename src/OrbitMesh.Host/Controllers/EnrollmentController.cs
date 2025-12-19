@@ -1,16 +1,20 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using OrbitMesh.Host.Authentication;
 using OrbitMesh.Host.Services.Security;
 
 namespace OrbitMesh.Host.Controllers;
 
 /// <summary>
 /// REST API controller for node enrollment and bootstrap token management.
+/// Most endpoints require admin authentication.
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[AdminAuthorize]
 public class EnrollmentController : ControllerBase
 {
     private readonly IBootstrapTokenService _bootstrapTokenService;
@@ -99,11 +103,13 @@ public class EnrollmentController : ControllerBase
 
     /// <summary>
     /// Gets the enrollment status (for node polling).
+    /// This endpoint is accessible without authentication for node polling.
     /// </summary>
     /// <param name="enrollmentId">Enrollment ID.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Current enrollment status.</returns>
     [HttpGet("status/{enrollmentId}")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(EnrollmentStatusResult), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetEnrollmentStatus(
@@ -249,10 +255,12 @@ public class EnrollmentController : ControllerBase
 
     /// <summary>
     /// Gets the server's public key information.
+    /// This endpoint is accessible without authentication for initial node setup.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Server key info.</returns>
     [HttpGet("server-key")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(ServerKeyInfo), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetServerKeyInfo(
         CancellationToken cancellationToken = default)
@@ -342,10 +350,12 @@ public class EnrollmentController : ControllerBase
 
     /// <summary>
     /// Gets the certificate revocation list.
+    /// This endpoint is accessible without authentication for certificate validation.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>List of revoked certificates.</returns>
     [HttpGet("revocation-list")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(IReadOnlyList<RevokedCertificate>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetRevocationList(
         CancellationToken cancellationToken = default)

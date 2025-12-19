@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using OrbitMesh.Host.Authentication;
 using OrbitMesh.Workflows.Engine;
 using OrbitMesh.Workflows.Models;
 
@@ -7,10 +8,12 @@ namespace OrbitMesh.Host.Controllers;
 
 /// <summary>
 /// REST API controller for workflow management.
+/// Requires admin authentication.
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[AdminAuthorize]
 public class WorkflowsController : ControllerBase
 {
     private readonly IWorkflowRegistry _registry;

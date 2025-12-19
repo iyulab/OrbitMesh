@@ -1,15 +1,18 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using OrbitMesh.Host.Authentication;
 using OrbitMesh.Host.Services;
 
 namespace OrbitMesh.Host.Controllers;
 
 /// <summary>
 /// REST API controller for API token management.
+/// Requires admin authentication.
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[AdminAuthorize]
 public class TokensController : ControllerBase
 {
     private readonly IApiTokenService _tokenService;

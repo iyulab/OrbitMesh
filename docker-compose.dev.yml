@@ -1,40 +1,69 @@
-version: '3.8'
-
-# Development override - use for local development with hot reload
-# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Development override - build from source with hot reload
+# Usage: docker-compose -f docker-compose.dev.yml up --build
 
 services:
-  orbit-server:
+  orbitmesh-server:
     build:
       context: .
-      dockerfile: products/orbit-server/Dockerfile
-      target: build
-    volumes:
-      - .:/src
-      - orbit-nuget:/root/.nuget
-    environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - DOTNET_USE_POLLING_FILE_WATCHER=true
-    command: dotnet watch run --project /src/products/orbit-server/orbit-server.csproj
+      dockerfile: products/orbit-host/Dockerfile
+    container_name: orbitmesh-server-dev
     ports:
       - "5000:5000"
+    volumes:
+      - orbitmesh-data-dev:/app/data
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5000
+      - ConnectionStrings__OrbitMesh=Data Source=/app/data/orbitmesh.db
+      - OrbitMesh__AdminPassword=admin
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - orbitmesh-dev
 
-  orbit-agent-1:
+  orbitmesh-agent-1:
     build:
       context: .
-      dockerfile: products/orbit-agent/Dockerfile
-      target: build
-    volumes:
-      - .:/src
-      - orbit-nuget:/root/.nuget
+      dockerfile: products/orbit-node/Dockerfile
+    container_name: orbitmesh-agent-1-dev
     environment:
-      - OrbitMesh__ServerUrl=http://orbit-server:5000/agent
+      - OrbitMesh__ServerUrl=http://orbitmesh-server:5000/agent
       - OrbitMesh__AgentName=dev-agent-1
-      - DOTNET_USE_POLLING_FILE_WATCHER=true
-    command: dotnet watch run --project /src/products/orbit-agent/orbit-agent.csproj
+      - OrbitMesh__Tags=docker,dev
+      - OrbitMesh__EnableShellExecution=false
     depends_on:
-      - orbit-server
+      orbitmesh-server:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - orbitmesh-dev
+
+  orbitmesh-agent-2:
+    build:
+      context: .
+      dockerfile: products/orbit-node/Dockerfile
+    container_name: orbitmesh-agent-2-dev
+    environment:
+      - OrbitMesh__ServerUrl=http://orbitmesh-server:5000/agent
+      - OrbitMesh__AgentName=dev-agent-2
+      - OrbitMesh__Tags=docker,dev
+      - OrbitMesh__EnableShellExecution=false
+    depends_on:
+      orbitmesh-server:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - orbitmesh-dev
 
 volumes:
-  orbit-nuget:
+  orbitmesh-data-dev:
     driver: local
+
+networks:
+  orbitmesh-dev:
+    driver: bridge

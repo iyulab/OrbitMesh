@@ -1,4 +1,5 @@
 using System.Globalization;
+using OrbitMesh.Host.Authentication;
 using OrbitMesh.Host.Extensions;
 using OrbitMesh.Host.Features;
 using OrbitMesh.Storage.Sqlite.Extensions;
@@ -77,6 +78,9 @@ try
         });
     }
 
+    // Add admin authentication (reads from env var or appsettings.json)
+    builder.Services.AddAdminAuthentication(builder.Configuration);
+
     // Build the app
     var app = builder.Build();
 
@@ -89,6 +93,10 @@ try
     }
 
     app.UseRouting();
+
+    // Authentication and authorization
+    app.UseAuthentication();
+    app.UseAuthorization();
 
     // Serve static files (SPA)
     app.UseDefaultFiles();

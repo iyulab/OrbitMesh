@@ -1,12 +1,22 @@
 import type { Agent, Job, Workflow, WorkflowInstance, ServerStatus, ApiToken } from '@/types'
 
 const API_BASE = '/api'
+const AUTH_STORAGE_KEY = 'orbitmesh_auth'
+
+function getAuthHeader(): Record<string, string> {
+  const password = sessionStorage.getItem(AUTH_STORAGE_KEY)
+  if (password) {
+    return { 'X-Admin-Password': password }
+  }
+  return {}
+}
 
 async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...getAuthHeader(),
       ...options?.headers,
     },
   })

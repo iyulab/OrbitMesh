@@ -1,16 +1,19 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using OrbitMesh.Core.Enums;
+using OrbitMesh.Host.Authentication;
 using OrbitMesh.Host.Services;
 
 namespace OrbitMesh.Host.Controllers;
 
 /// <summary>
 /// REST API controller for server status information.
+/// Requires admin authentication.
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[AdminAuthorize]
 public class StatusController : ControllerBase
 {
     private readonly IAgentRegistry _agentRegistry;

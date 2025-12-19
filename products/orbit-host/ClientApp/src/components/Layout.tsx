@@ -15,9 +15,11 @@ import {
   Search,
   Menu,
   X,
+  LogOut,
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { useSignalRContext } from '@/contexts/SignalRContext'
 import { NotificationCenter } from '@/components/NotificationCenter'
 
@@ -129,6 +131,20 @@ function SearchButton() {
   )
 }
 
+function LogoutButton() {
+  const { logout } = useAuth()
+
+  return (
+    <button
+      onClick={logout}
+      className="flex items-center gap-2 w-full px-3 py-2 text-sm text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+    >
+      <LogOut className="w-4 h-4" />
+      <span>Sign Out</span>
+    </button>
+  )
+}
+
 function Sidebar({ mobile = false, onClose }: { mobile?: boolean; onClose?: () => void }) {
   return (
     <aside
@@ -200,6 +216,7 @@ function Sidebar({ mobile = false, onClose }: { mobile?: boolean; onClose?: () =
           <ConnectionStatus />
           <NotificationCenter />
         </div>
+        <LogoutButton />
       </div>
     </aside>
   )

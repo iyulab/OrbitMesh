@@ -1,67 +1,80 @@
-version: '3.8'
+# OrbitMesh Docker Compose Configuration
+# For production deployment using GitHub Container Registry images
 
 services:
-  orbit-server:
-    build:
-      context: .
-      dockerfile: products/orbit-server/Dockerfile
-    image: orbitmesh/orbit-server:latest
-    container_name: orbit-server
+  # OrbitMesh Server
+  orbitmesh-server:
+    image: ghcr.io/iyulab/orbitmesh-server:latest
+    container_name: orbitmesh-server
     ports:
       - "5000:5000"
     volumes:
-      - orbit-data:/data
+      # Data persistence (SQLite database)
+      - orbitmesh-data:/app/data
+      # Optional: Custom configuration
+      - ./config/appsettings.json:/app/appsettings.json:ro
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__OrbitMesh=Data Source=/data/orbitmesh.db
+      - ASPNETCORE_URLS=http://+:5000
+      - ConnectionStrings__OrbitMesh=Data Source=/app/data/orbitmesh.db
+      # Admin password (required for admin console)
+      - ORBITMESH_ADMIN_PASSWORD=${ORBITMESH_ADMIN_PASSWORD:-}
+      # Or use config file: OrbitMesh__AdminPassword
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 5s
+      start_period: 10s
     restart: unless-stopped
     networks:
       - orbitmesh
+    labels:
+      # Watchtower labels for auto-update
+      - "com.centurylinklabs.watchtower.enable=true"
 
-  orbit-agent-1:
-    build:
-      context: .
-      dockerfile: products/orbit-agent/Dockerfile
-    image: orbitmesh/orbit-agent:latest
-    container_name: orbit-agent-1
+  # OrbitMesh Agent (example - scale as needed)
+  orbitmesh-agent:
+    image: ghcr.io/iyulab/orbitmesh-agent:latest
+    container_name: orbitmesh-agent-1
     environment:
-      - OrbitMesh__ServerUrl=http://orbit-server:5000/agent
+      - OrbitMesh__ServerUrl=http://orbitmesh-server:5000/agent
       - OrbitMesh__AgentName=agent-1
       - OrbitMesh__Tags=docker,worker
       - OrbitMesh__EnableShellExecution=false
     depends_on:
-      orbit-server:
+      orbitmesh-server:
         condition: service_healthy
     restart: unless-stopped
     networks:
       - orbitmesh
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
 
-  orbit-agent-2:
-    build:
-      context: .
-      dockerfile: products/orbit-agent/Dockerfile
-    image: orbitmesh/orbit-agent:latest
-    container_name: orbit-agent-2
+  # Watchtower - Automatic container updates
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - OrbitMesh__ServerUrl=http://orbit-server:5000/agent
-      - OrbitMesh__AgentName=agent-2
-      - OrbitMesh__Tags=docker,worker
-      - OrbitMesh__EnableShellExecution=false
-    depends_on:
-      orbit-server:
-        condition: service_healthy
+      # Check for updates every 5 minutes
+      - WATCHTOWER_POLL_INTERVAL=300
+      # Only update containers with enable label
+      - WATCHTOWER_LABEL_ENABLE=true
+      # Clean up old images
+      - WATCHTOWER_CLEANUP=true
+      # Include stopped containers
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      # Notifications (optional - configure as needed)
+      # - WATCHTOWER_NOTIFICATIONS=slack
+      # - WATCHTOWER_NOTIFICATION_SLACK_HOOK_URL=https://hooks.slack.com/...
     restart: unless-stopped
     networks:
       - orbitmesh
 
 volumes:
-  orbit-data:
+  orbitmesh-data:
     driver: local
 
 networks:

@@ -1,16 +1,19 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using OrbitMesh.Core.Models;
+using OrbitMesh.Host.Authentication;
 using OrbitMesh.Host.Services;
 
 namespace OrbitMesh.Host.Controllers;
 
 /// <summary>
 /// REST API controller for agent management operations.
+/// Requires admin authentication.
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[AdminAuthorize]
 public class AgentsController : ControllerBase
 {
     private readonly IAgentRegistry _registry;

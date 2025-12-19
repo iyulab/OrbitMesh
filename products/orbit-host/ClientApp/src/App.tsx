@@ -1,5 +1,5 @@
 import { Routes, Route, Link } from 'react-router-dom'
-import { Home, AlertCircle } from 'lucide-react'
+import { Home, AlertCircle, Loader2 } from 'lucide-react'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Agents from './pages/Agents'
@@ -10,7 +10,9 @@ import Workflows from './pages/Workflows'
 import WorkflowCreate from './pages/WorkflowCreate'
 import WorkflowEdit from './pages/WorkflowEdit'
 import Settings from './pages/Settings'
+import Login from './pages/Login'
 import { SignalRProvider } from './contexts/SignalRContext'
+import { useAuth } from './contexts/AuthContext'
 import { CommandPalette, useCommandPalette } from './components/CommandPalette'
 
 function NotFound() {
@@ -60,7 +62,28 @@ function AppContent() {
   )
 }
 
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-900">
+      <div className="text-center">
+        <Loader2 className="w-8 h-8 text-blue-500 animate-spin mx-auto mb-4" />
+        <p className="text-slate-400">Loading...</p>
+      </div>
+    </div>
+  )
+}
+
 function App() {
+  const { isAuthenticated, isLoading } = useAuth()
+
+  if (isLoading) {
+    return <LoadingScreen />
+  }
+
+  if (!isAuthenticated) {
+    return <Login />
+  }
+
   return (
     <SignalRProvider>
       <AppContent />
