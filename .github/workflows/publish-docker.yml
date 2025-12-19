@@ -104,31 +104,25 @@ jobs:
           subject-digest: ${{ steps.build-push.outputs.digest }}
           push-to-registry: true
 
-  # Make packages public after first push
-  make-public:
+  # Note: Making packages public requires manual configuration
+  # GITHUB_TOKEN cannot change package visibility to public (GitHub security restriction)
+  # To make packages public:
+  # 1. Go to https://github.com/orgs/iyulab/packages
+  # 2. Click on each package (orbitmesh-server, orbitmesh-agent)
+  # 3. Go to Package settings → Change visibility → Public
+  verify-packages:
     runs-on: ubuntu-latest
     needs: build-and-push
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    permissions:
-      packages: write
 
     steps:
-      - name: Make packages public
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const packages = ['orbitmesh-server', 'orbitmesh-agent'];
-            for (const pkg of packages) {
-              try {
-                await github.rest.packages.updatePackageForAuthenticatedUser({
-                  package_type: 'container',
-                  package_name: pkg,
-                  visibility: 'public'
-                });
-                console.log(`Made ${pkg} public`);
-              } catch (error) {
-                // Package may already be public or not exist yet
-                console.log(`Could not update ${pkg}: ${error.message}`);
-              }
-            }
+      - name: Verify packages published
+        run: |
+          echo "✅ Docker images published to ghcr.io"
+          echo ""
+          echo "📦 Packages:"
+          echo "  - ghcr.io/iyulab/orbitmesh-server:latest"
+          echo "  - ghcr.io/iyulab/orbitmesh-agent:latest"
+          echo ""
+          echo "⚠️  To make packages PUBLIC, manually configure at:"
+          echo "  https://github.com/orgs/iyulab/packages"
