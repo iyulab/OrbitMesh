@@ -14,6 +14,7 @@ WORKDIR /src
 # Copy solution and project files for better caching
 COPY Directory.Build.props Directory.Packages.props ./
 COPY src/OrbitMesh.Core/OrbitMesh.Core.csproj src/OrbitMesh.Core/
+COPY src/OrbitMesh.Transport.P2P/OrbitMesh.Transport.P2P.csproj src/OrbitMesh.Transport.P2P/
 COPY src/OrbitMesh.Node/OrbitMesh.Node.csproj src/OrbitMesh.Node/
 COPY products/orbit-node/orbit-node.csproj products/orbit-node/
 
