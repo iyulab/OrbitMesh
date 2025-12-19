@@ -46,7 +46,8 @@ RUN dotnet publish products/orbit-host/orbit-host.csproj \
     -p:PublishSingleFile=false \
     -p:SelfContained=false \
     -p:SourceRevisionId=${SOURCE_REVISION_ID} \
-    -p:Version=${VERSION}
+    -p:Version=${VERSION} \
+    -p:TreatWarningsAsErrors=false
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS runtime
