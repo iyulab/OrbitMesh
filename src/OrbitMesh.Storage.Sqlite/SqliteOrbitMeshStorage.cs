@@ -45,7 +45,11 @@ public sealed class SqliteOrbitMeshStorage : IOrbitMeshStorage
         if (_options.AutoMigrate)
         {
             _logger.LogInformation("Applying database migrations...");
+            // First, ensure the database exists
             await context.Database.EnsureCreatedAsync(ct);
+
+            // Then, ensure any missing tables are created
+            await EnsureMissingTablesAsync(context, ct);
         }
 
         // Configure SQLite for optimal performance
@@ -57,6 +61,62 @@ public sealed class SqliteOrbitMeshStorage : IOrbitMeshStorage
         await ConfigurePragmasAsync(context, ct);
 
         _logger.LogInformation("SQLite storage initialized successfully");
+    }
+
+    private async Task EnsureMissingTablesAsync(OrbitMeshDbContext context, CancellationToken ct)
+    {
+        // Get all table names from the model
+        var modelTables = context.Model.GetEntityTypes()
+            .Select(t => t.GetTableName())
+            .Where(n => !string.IsNullOrEmpty(n))
+            .ToHashSet();
+
+        // Get existing table names from the database
+        var existingTables = new HashSet<string>();
+        await using (var command = context.Database.GetDbConnection().CreateCommand())
+        {
+            command.CommandText = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';";
+            await context.Database.OpenConnectionAsync(ct);
+
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                existingTables.Add(reader.GetString(0));
+            }
+        }
+
+        // Find missing tables
+        var missingTables = modelTables.Except(existingTables).ToList();
+
+        if (missingTables.Count > 0)
+        {
+            _logger.LogInformation("Creating missing tables: {Tables}", string.Join(", ", missingTables));
+
+            // Generate and execute CREATE TABLE statements for missing tables
+            var script = context.Database.GenerateCreateScript();
+            var statements = script.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            foreach (var statement in statements)
+            {
+                // Check if this statement is for a missing table
+                var isForMissingTable = missingTables.Any(t =>
+                    statement.Contains($"CREATE TABLE \"{t}\"", StringComparison.OrdinalIgnoreCase) ||
+                    statement.Contains($"CREATE TABLE {t}", StringComparison.OrdinalIgnoreCase));
+
+                if (isForMissingTable)
+                {
+                    try
+                    {
+                        await context.Database.ExecuteSqlRawAsync(statement, ct);
+                        _logger.LogDebug("Executed: {Statement}", statement[..Math.Min(100, statement.Length)]);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to execute statement: {Statement}", statement[..Math.Min(100, statement.Length)]);
+                    }
+                }
+            }
+        }
     }
 
     public Task DisposeAsync()
