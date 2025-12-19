@@ -18,7 +18,8 @@
     <!-- CA2016: CancellationToken forwarding - can be addressed incrementally -->
     <!-- CA1062: Parameter validation - nullable reference types handle this -->
     <!-- MsgPack017: Init properties with initializers - acceptable pattern -->
-    <NoWarn>$(NoWarn);CA2007;CA1819;CA2016;CA1062;MsgPack017</NoWarn>
+    <!-- CA1848: LoggerMessage delegates - acceptable for current codebase -->
+    <NoWarn>$(NoWarn);CA2007;CA1819;CA2016;CA1062;MsgPack017;CA1848</NoWarn>
 
     <!-- Native AOT Readiness (disabled for Docker builds) -->
     <IsAotCompatible Condition="'$(PublishAot)' == 'true'">true</IsAotCompatible>
