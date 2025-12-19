@@ -1,4 +1,4 @@
-import type { Agent, Job, Workflow, WorkflowInstance, ServerStatus, ApiToken } from '@/types'
+import type { Agent, Job, Workflow, WorkflowInstance, ServerStatus, ApiToken, BootstrapToken, CreateBootstrapTokenRequest } from '@/types'
 
 const API_BASE = '/api'
 const AUTH_STORAGE_KEY = 'orbitmesh_auth'
@@ -218,4 +218,20 @@ export function generateDockerCommand(serverUrl: string, token: string, options?
   }
 
   return `docker run -d \\\n  ${envVars.join(' \\\n  ')} \\\n  ${image}`
+}
+
+// Bootstrap Tokens (TOFU enrollment)
+export async function getBootstrapTokens(): Promise<BootstrapToken[]> {
+  return fetchApi('/enrollment/bootstrap-tokens')
+}
+
+export async function createBootstrapToken(request: CreateBootstrapTokenRequest): Promise<BootstrapToken> {
+  return fetchApi('/enrollment/bootstrap-tokens', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export async function revokeBootstrapToken(tokenId: string): Promise<void> {
+  await fetchApi(`/enrollment/bootstrap-tokens/${tokenId}`, { method: 'DELETE' })
 }

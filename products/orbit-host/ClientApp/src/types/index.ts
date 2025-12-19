@@ -120,3 +120,24 @@ export interface ApiToken {
   lastUsedAt?: string
   scopes: string[]
 }
+
+// Bootstrap Token (TOFU enrollment)
+export interface BootstrapToken {
+  id: string
+  token?: string // Only returned once on creation
+  description?: string
+  createdAt: string
+  expiresAt: string
+  isConsumed: boolean
+  consumedAt?: string
+  consumedByNodeId?: string
+  preApprovedCapabilities: string[]
+  autoApprove: boolean
+}
+
+export interface CreateBootstrapTokenRequest {
+  description?: string
+  expirationHours?: number
+  preApprovedCapabilities?: string[]
+  autoApprove?: boolean
+}
