@@ -10,8 +10,9 @@ import {
   Container,
   RefreshCw,
   ChevronRight,
+  Ticket,
 } from 'lucide-react'
-import { getAgents, createApiToken, generateAgentCommand, generateDockerCommand } from '@/api/client'
+import { getAgents, getBootstrapToken, regenerateBootstrapToken } from '@/api/client'
 import { AgentStatusBadge } from '@/components/ui/status-badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -28,6 +29,47 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { toast } from '@/components/ui/sonner'
 
+function generateBootstrapAgentCommand(serverUrl: string, token: string, options?: {
+  name?: string
+  group?: string
+}): string {
+  const args = [
+    'orbit-agent',
+    `--server-url "${serverUrl}"`,
+    `--bootstrap-token "${token}"`,
+  ]
+
+  if (options?.name) {
+    args.push(`--name "${options.name}"`)
+  }
+  if (options?.group) {
+    args.push(`--group "${options.group}"`)
+  }
+
+  return args.join(' \\\n  ')
+}
+
+function generateBootstrapDockerCommand(serverUrl: string, token: string, options?: {
+  name?: string
+  group?: string
+  image?: string
+}): string {
+  const image = options?.image || 'orbitmesh/agent:latest'
+  const envVars = [
+    `-e ORBIT_SERVER_URL="${serverUrl}"`,
+    `-e ORBIT_BOOTSTRAP_TOKEN="${token}"`,
+  ]
+
+  if (options?.name) {
+    envVars.push(`-e ORBIT_AGENT_NAME="${options.name}"`)
+  }
+  if (options?.group) {
+    envVars.push(`-e ORBIT_AGENT_GROUP="${options.group}"`)
+  }
+
+  return `docker run -d \\\n  ${envVars.join(' \\\n  ')} \\\n  ${image}`
+}
+
 function AddAgentDialog({
   open,
   onOpenChange,
@@ -37,53 +79,61 @@ function AddAgentDialog({
   onOpenChange: (open: boolean) => void
   serverUrl: string
 }) {
-  const [tokenName, setTokenName] = useState('')
   const [agentName, setAgentName] = useState('')
   const [agentGroup, setAgentGroup] = useState('')
-  const [generatedToken, setGeneratedToken] = useState<string | null>(null)
-  const [copied, setCopied] = useState<'cli' | 'docker' | null>(null)
+  const [copied, setCopied] = useState<'cli' | 'docker' | 'token' | null>(null)
 
   const queryClient = useQueryClient()
 
-  const createTokenMutation = useMutation({
-    mutationFn: createApiToken,
+  const { data: bootstrapToken, isLoading } = useQuery({
+    queryKey: ['bootstrapToken'],
+    queryFn: getBootstrapToken,
+  })
+
+  const regenerateMutation = useMutation({
+    mutationFn: regenerateBootstrapToken,
     onSuccess: (data) => {
-      setGeneratedToken(data.token || '')
-      queryClient.invalidateQueries({ queryKey: ['tokens'] })
-      toast.success('Token generated successfully')
+      queryClient.setQueryData(['bootstrapToken'], data)
+      toast.success('Bootstrap token regenerated')
     },
     onError: (error) => {
-      toast.error('Failed to generate token', {
+      toast.error('Failed to regenerate token', {
         description: error instanceof Error ? error.message : 'Unknown error',
       })
     },
   })
 
-  const handleGenerateToken = () => {
-    createTokenMutation.mutate({
-      name: tokenName || `agent-${Date.now()}`,
-      scopes: ['agent:connect'],
-    })
-  }
+  // Use the token value if available (just regenerated), otherwise show placeholder
+  const tokenValue = bootstrapToken?.token || '(Click "Regenerate" to get token value)'
+  const hasToken = !!bootstrapToken?.token
 
-  const cliCommand = generatedToken
-    ? generateAgentCommand(serverUrl, generatedToken, {
+  const cliCommand = hasToken
+    ? generateBootstrapAgentCommand(serverUrl, bootstrapToken.token!, {
         name: agentName || undefined,
         group: agentGroup || undefined,
       })
     : ''
 
-  const dockerCommand = generatedToken
-    ? generateDockerCommand(serverUrl, generatedToken, {
+  const dockerCommand = hasToken
+    ? generateBootstrapDockerCommand(serverUrl, bootstrapToken.token!, {
         name: agentName || undefined,
         group: agentGroup || undefined,
       })
     : ''
 
-  const handleCopy = async (type: 'cli' | 'docker') => {
-    const command = type === 'cli' ? cliCommand : dockerCommand
+  const handleCopy = async (type: 'cli' | 'docker' | 'token') => {
+    let text = ''
+    if (type === 'cli') text = cliCommand
+    else if (type === 'docker') text = dockerCommand
+    else if (type === 'token' && bootstrapToken?.token) text = bootstrapToken.token
+
+    if (!text) {
+      toast.error('No token available. Please regenerate first.')
+      return
+    }
+
     try {
-      await navigator.clipboard.writeText(command)
+      await navigator.clipboard.writeText(text)
       setCopied(type)
       toast.success('Copied to clipboard')
       setTimeout(() => setCopied(null), 2000)
@@ -93,10 +143,8 @@ function AddAgentDialog({
   }
 
   const handleClose = () => {
-    setTokenName('')
     setAgentName('')
     setAgentGroup('')
-    setGeneratedToken(null)
     setCopied(null)
     onOpenChange(false)
   }
@@ -107,126 +155,179 @@ function AddAgentDialog({
         <DialogHeader>
           <DialogTitle>Add New Agent</DialogTitle>
           <DialogDescription>
-            Generate a token and connection command for a new agent
+            Use the Bootstrap Token to enroll new agents securely (TOFU)
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6 py-4">
-          {!generatedToken ? (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="token-name">Token Name</Label>
-                <Input
-                  id="token-name"
-                  placeholder="my-agent-token"
-                  value={tokenName}
-                  onChange={(e) => setTokenName(e.target.value)}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="agent-name">Agent Name (optional)</Label>
-                  <Input
-                    id="agent-name"
-                    placeholder="worker-01"
-                    value={agentName}
-                    onChange={(e) => setAgentName(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="agent-group">Agent Group (optional)</Label>
-                  <Input
-                    id="agent-group"
-                    placeholder="production"
-                    value={agentGroup}
-                    onChange={(e) => setAgentGroup(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <Button
-                onClick={handleGenerateToken}
-                disabled={createTokenMutation.isPending}
-                className="w-full"
-              >
-                {createTokenMutation.isPending ? 'Generating...' : 'Generate Token'}
-              </Button>
+          {isLoading ? (
+            <div className="text-center py-8">
+              <RefreshCw className="w-8 h-8 text-slate-400 animate-spin mx-auto mb-2" />
+              <p className="text-slate-500">Loading bootstrap token...</p>
             </div>
           ) : (
             <>
-              <Alert className="border-yellow-200 bg-yellow-50 dark:border-yellow-500/20 dark:bg-yellow-500/10">
-                <AlertDescription className="text-yellow-700 dark:text-yellow-400">
-                  Copy this token now. It will not be shown again.
-                </AlertDescription>
-              </Alert>
+              {/* Bootstrap Token Section */}
+              <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-2 mb-3">
+                  <Ticket className="w-5 h-5 text-orbit-600 dark:text-orbit-400" />
+                  <h3 className="text-sm font-medium text-slate-900 dark:text-white">Bootstrap Token</h3>
+                  {!bootstrapToken?.isEnabled && (
+                    <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 text-xs rounded">
+                      Disabled
+                    </span>
+                  )}
+                </div>
 
-              <Tabs defaultValue="cli">
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="cli" className="flex items-center gap-2">
-                    <Terminal className="w-4 h-4" />
-                    CLI Command
-                  </TabsTrigger>
-                  <TabsTrigger value="docker" className="flex items-center gap-2">
-                    <Container className="w-4 h-4" />
-                    Docker Command
-                  </TabsTrigger>
-                </TabsList>
-                <TabsContent value="cli" className="mt-4">
-                  <div className="relative">
-                    <pre className="bg-slate-100 dark:bg-slate-900 rounded-lg p-4 text-sm text-slate-700 dark:text-slate-300 overflow-x-auto">
-                      {cliCommand}
-                    </pre>
+                {!bootstrapToken?.isEnabled ? (
+                  <Alert className="border-red-200 bg-red-50 dark:border-red-500/20 dark:bg-red-500/10">
+                    <AlertDescription className="text-red-700 dark:text-red-400">
+                      Bootstrap token is disabled. Enable it in Settings to allow new agent enrollment.
+                    </AlertDescription>
+                  </Alert>
+                ) : hasToken ? (
+                  <>
+                    <Alert className="border-yellow-200 bg-yellow-50 dark:border-yellow-500/20 dark:bg-yellow-500/10 mb-3">
+                      <AlertDescription className="text-yellow-700 dark:text-yellow-400">
+                        Copy this token now. It will not be shown again after closing this dialog.
+                      </AlertDescription>
+                    </Alert>
+                    <div className="relative">
+                      <Input
+                        readOnly
+                        value={tokenValue}
+                        className="pr-12 font-mono text-sm"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-1 top-1/2 -translate-y-1/2"
+                        onClick={() => handleCopy('token')}
+                      >
+                        {copied === 'token' ? (
+                          <Check className="w-4 h-4 text-green-600" />
+                        ) : (
+                          <Copy className="w-4 h-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-4">
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
+                      Click regenerate to get the bootstrap token value
+                    </p>
                     <Button
-                      variant="ghost"
-                      size="icon"
-                      className="absolute top-2 right-2"
-                      onClick={() => handleCopy('cli')}
+                      onClick={() => regenerateMutation.mutate()}
+                      disabled={regenerateMutation.isPending}
                     >
-                      {copied === 'cli' ? (
-                        <Check className="w-4 h-4 text-green-600" />
-                      ) : (
-                        <Copy className="w-4 h-4" />
-                      )}
+                      <RefreshCw className={`w-4 h-4 mr-2 ${regenerateMutation.isPending ? 'animate-spin' : ''}`} />
+                      {regenerateMutation.isPending ? 'Regenerating...' : 'Regenerate Token'}
                     </Button>
                   </div>
-                </TabsContent>
-                <TabsContent value="docker" className="mt-4">
-                  <div className="relative">
-                    <pre className="bg-slate-100 dark:bg-slate-900 rounded-lg p-4 text-sm text-slate-700 dark:text-slate-300 overflow-x-auto">
-                      {dockerCommand}
-                    </pre>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="absolute top-2 right-2"
-                      onClick={() => handleCopy('docker')}
-                    >
-                      {copied === 'docker' ? (
-                        <Check className="w-4 h-4 text-green-600" />
-                      ) : (
-                        <Copy className="w-4 h-4" />
-                      )}
-                    </Button>
-                  </div>
-                </TabsContent>
-              </Tabs>
-
-              <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4">
-                <h3 className="text-sm font-medium text-slate-900 dark:text-white mb-2">Instructions</h3>
-                <ol className="text-sm text-slate-600 dark:text-slate-400 space-y-2 list-decimal list-inside">
-                  <li>Copy the command above</li>
-                  <li>Run it on the machine where you want to deploy the agent</li>
-                  <li>The agent will automatically connect and appear in this list</li>
-                </ol>
+                )}
               </div>
+
+              {/* Agent Options */}
+              {hasToken && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="agent-name">Agent Name (optional)</Label>
+                      <Input
+                        id="agent-name"
+                        placeholder="worker-01"
+                        value={agentName}
+                        onChange={(e) => setAgentName(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="agent-group">Agent Group (optional)</Label>
+                      <Input
+                        id="agent-group"
+                        placeholder="production"
+                        value={agentGroup}
+                        onChange={(e) => setAgentGroup(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Connection Commands */}
+                  <Tabs defaultValue="cli">
+                    <TabsList className="grid w-full grid-cols-2">
+                      <TabsTrigger value="cli" className="flex items-center gap-2">
+                        <Terminal className="w-4 h-4" />
+                        CLI Command
+                      </TabsTrigger>
+                      <TabsTrigger value="docker" className="flex items-center gap-2">
+                        <Container className="w-4 h-4" />
+                        Docker Command
+                      </TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="cli" className="mt-4">
+                      <div className="relative">
+                        <pre className="bg-slate-100 dark:bg-slate-900 rounded-lg p-4 text-sm text-slate-700 dark:text-slate-300 overflow-x-auto">
+                          {cliCommand}
+                        </pre>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="absolute top-2 right-2"
+                          onClick={() => handleCopy('cli')}
+                        >
+                          {copied === 'cli' ? (
+                            <Check className="w-4 h-4 text-green-600" />
+                          ) : (
+                            <Copy className="w-4 h-4" />
+                          )}
+                        </Button>
+                      </div>
+                    </TabsContent>
+                    <TabsContent value="docker" className="mt-4">
+                      <div className="relative">
+                        <pre className="bg-slate-100 dark:bg-slate-900 rounded-lg p-4 text-sm text-slate-700 dark:text-slate-300 overflow-x-auto">
+                          {dockerCommand}
+                        </pre>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="absolute top-2 right-2"
+                          onClick={() => handleCopy('docker')}
+                        >
+                          {copied === 'docker' ? (
+                            <Check className="w-4 h-4 text-green-600" />
+                          ) : (
+                            <Copy className="w-4 h-4" />
+                          )}
+                        </Button>
+                      </div>
+                    </TabsContent>
+                  </Tabs>
+
+                  {/* Instructions */}
+                  <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
+                    <h3 className="text-sm font-medium text-blue-900 dark:text-blue-100 mb-2">How TOFU Enrollment Works</h3>
+                    <ol className="text-sm text-blue-700 dark:text-blue-300 space-y-2 list-decimal list-inside">
+                      <li>Agent connects using the bootstrap token</li>
+                      <li>Server issues a certificate for the agent</li>
+                      <li>Agent stores the certificate for future connections</li>
+                      <li>All subsequent connections use certificate authentication</li>
+                    </ol>
+                    {bootstrapToken?.autoApprove && (
+                      <p className="mt-3 text-xs text-blue-600 dark:text-blue-400">
+                        ✓ Auto-approve is enabled - agents will be enrolled automatically
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={handleClose}>
-            {generatedToken ? 'Done' : 'Cancel'}
+            Done
           </Button>
         </DialogFooter>
       </DialogContent>

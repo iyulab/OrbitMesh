@@ -175,56 +175,6 @@ export async function revokeApiToken(id: string): Promise<void> {
   await fetchApi(`/tokens/${id}`, { method: 'DELETE' })
 }
 
-// Agent connection command generator (like GPUStack)
-export function generateAgentCommand(serverUrl: string, token: string, options?: {
-  name?: string
-  group?: string
-  tags?: string[]
-}): string {
-  const args = [
-    'orbit-agent',
-    `--server-url "${serverUrl}"`,
-    `--token "${token}"`,
-  ]
-
-  if (options?.name) {
-    args.push(`--name "${options.name}"`)
-  }
-  if (options?.group) {
-    args.push(`--group "${options.group}"`)
-  }
-  if (options?.tags?.length) {
-    args.push(`--tags "${options.tags.join(',')}"`)
-  }
-
-  return args.join(' \\\n  ')
-}
-
-export function generateDockerCommand(serverUrl: string, token: string, options?: {
-  name?: string
-  group?: string
-  tags?: string[]
-  image?: string
-}): string {
-  const image = options?.image || 'orbitmesh/agent:latest'
-  const envVars = [
-    `-e ORBIT_SERVER_URL="${serverUrl}"`,
-    `-e ORBIT_TOKEN="${token}"`,
-  ]
-
-  if (options?.name) {
-    envVars.push(`-e ORBIT_AGENT_NAME="${options.name}"`)
-  }
-  if (options?.group) {
-    envVars.push(`-e ORBIT_AGENT_GROUP="${options.group}"`)
-  }
-  if (options?.tags?.length) {
-    envVars.push(`-e ORBIT_AGENT_TAGS="${options.tags.join(',')}"`)
-  }
-
-  return `docker run -d \\\n  ${envVars.join(' \\\n  ')} \\\n  ${image}`
-}
-
 // Bootstrap Token (TOFU enrollment) - Single reusable token
 export async function getBootstrapToken(): Promise<BootstrapToken> {
   return fetchApi('/enrollment/bootstrap-token')

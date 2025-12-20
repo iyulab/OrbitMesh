@@ -97,6 +97,12 @@ local.settings.json
 artifacts/
 publish/
 
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
 # Misc
 *.bak
 *.tmp

@@ -90,7 +90,7 @@ function CreateTokenDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const [name, setName] = useState('')
-  const [scopes, setScopes] = useState<string[]>(['agent:connect'])
+  const [scopes, setScopes] = useState<string[]>(['api:read'])
   const [expiresInDays, setExpiresInDays] = useState('')
   const [newToken, setNewToken] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -114,9 +114,8 @@ function CreateTokenDialog({
   })
 
   const availableScopes = [
-    { id: 'agent:connect', label: 'Agent Connect', description: 'Allow agent connections' },
-    { id: 'api:read', label: 'API Read', description: 'Read API access' },
-    { id: 'api:write', label: 'API Write', description: 'Write API access' },
+    { id: 'api:read', label: 'API Read', description: 'Read-only access to API endpoints' },
+    { id: 'api:write', label: 'API Write', description: 'Read and write access to API endpoints' },
     { id: 'admin', label: 'Admin', description: 'Full administrative access' },
   ]
 
@@ -151,7 +150,7 @@ function CreateTokenDialog({
 
   const handleClose = () => {
     setName('')
-    setScopes(['agent:connect'])
+    setScopes(['api:read'])
     setExpiresInDays('')
     setNewToken(null)
     setCopied(false)
@@ -164,7 +163,7 @@ function CreateTokenDialog({
         <DialogHeader>
           <DialogTitle>Create API Token</DialogTitle>
           <DialogDescription>
-            Create a new token for API or agent access
+            Create tokens for programmatic access to REST API endpoints.
           </DialogDescription>
         </DialogHeader>
 
@@ -312,6 +311,17 @@ function BootstrapTokenCard({ token, onRegenerate }: { token: BootstrapToken; on
 
   return (
     <div className="space-y-4">
+      {/* Workflow explanation */}
+      {!token.token && (
+        <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+          <p className="text-sm text-blue-700 dark:text-blue-300">
+            <strong>How it works:</strong> Agents use this token for initial enrollment.
+            Once enrolled, they receive a certificate for secure, permanent authentication.
+            Click "Regenerate Token" to get a new token value (invalidates the old one).
+          </p>
+        </div>
+      )}
+
       {/* Token Value (only shown after regenerate) */}
       {token.token && (
         <Alert className="border-yellow-200 bg-yellow-50 dark:border-yellow-500/20 dark:bg-yellow-500/10">
@@ -484,7 +494,10 @@ export default function Settings() {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <Shield className="w-5 h-5 text-orbit-600 dark:text-orbit-400" />
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">API Tokens</h2>
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">API Tokens</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400">For programmatic access to REST API endpoints</p>
+            </div>
           </div>
           <div className="flex gap-2">
             <Button
@@ -551,7 +564,9 @@ export default function Settings() {
             <Ticket className="w-5 h-5 text-orbit-600 dark:text-orbit-400" />
             <div>
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Bootstrap Token</h2>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Reusable token for agent enrollment (TOFU)</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Recommended: Trust-On-First-Use enrollment with certificate-based security
+              </p>
             </div>
           </div>
           <Button

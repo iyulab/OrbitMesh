@@ -20,7 +20,6 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
     private readonly IJobManager _jobManager;
     private readonly IProgressService _progressService;
     private readonly IStreamingService _streamingService;
-    private readonly IApiTokenService _tokenService;
     private readonly IBootstrapTokenService _bootstrapTokenService;
     private readonly INodeEnrollmentService _enrollmentService;
     private readonly INodeCredentialService _credentialService;
@@ -32,10 +31,6 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
     /// </summary>
     public const string AllAgentsGroup = "all-agents";
 
-    /// <summary>
-    /// Required scope for agent connections.
-    /// </summary>
-    public const string AgentScope = "agent";
 
     /// <summary>
     /// SignalR group for nodes pending enrollment.
@@ -47,7 +42,6 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
         IJobManager jobManager,
         IProgressService progressService,
         IStreamingService streamingService,
-        IApiTokenService tokenService,
         IBootstrapTokenService bootstrapTokenService,
         INodeEnrollmentService enrollmentService,
         INodeCredentialService credentialService,
@@ -58,7 +52,6 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
         _jobManager = jobManager;
         _progressService = progressService;
         _streamingService = streamingService;
-        _tokenService = tokenService;
         _bootstrapTokenService = bootstrapTokenService;
         _enrollmentService = enrollmentService;
         _credentialService = credentialService;
@@ -88,7 +81,7 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
         }
 
         // Extract authentication tokens from query string or header
-        var rawAccessToken = httpContext.Request.Query["access_token"].FirstOrDefault()
+        var accessToken = httpContext.Request.Query["access_token"].FirstOrDefault()
             ?? httpContext.Request.Headers.Authorization.FirstOrDefault()?.Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
         var bootstrapToken = httpContext.Request.Query["bootstrap_token"].FirstOrDefault()
             ?? httpContext.Request.Headers["X-Bootstrap-Token"].FirstOrDefault();
@@ -99,18 +92,15 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
 
         // Parse prefixed access tokens (from MeshAgentBuilder)
         // Format: "cert:{certificate}" or "bootstrap:{token}"
-        string? accessToken = rawAccessToken;
-        if (!string.IsNullOrEmpty(rawAccessToken))
+        if (!string.IsNullOrEmpty(accessToken))
         {
-            if (rawAccessToken.StartsWith("cert:", StringComparison.OrdinalIgnoreCase))
+            if (accessToken.StartsWith("cert:", StringComparison.OrdinalIgnoreCase))
             {
-                certificate ??= rawAccessToken[5..];
-                accessToken = null;
+                certificate ??= accessToken[5..];
             }
-            else if (rawAccessToken.StartsWith("bootstrap:", StringComparison.OrdinalIgnoreCase))
+            else if (accessToken.StartsWith("bootstrap:", StringComparison.OrdinalIgnoreCase))
             {
-                bootstrapToken ??= rawAccessToken[10..];
-                accessToken = null;
+                bootstrapToken ??= accessToken[10..];
             }
         }
 
@@ -168,43 +158,10 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
             }
 
             _logger.LogWarning(
-                "Invalid or consumed bootstrap token provided. ConnectionId: {ConnectionId}",
+                "Invalid bootstrap token provided. ConnectionId: {ConnectionId}",
                 Context.ConnectionId);
             Context.Abort();
             return;
-        }
-
-        // Priority 3: Legacy API token authentication
-        if (!string.IsNullOrEmpty(accessToken))
-        {
-            var validToken = await _tokenService.ValidateTokenAsync(accessToken, AgentScope);
-            if (validToken is not null)
-            {
-                Context.Items["TokenId"] = validToken.Id;
-                Context.Items["TokenName"] = validToken.Name;
-                Context.Items["AuthType"] = "ApiToken";
-                await _tokenService.UpdateLastUsedAsync(validToken.Id);
-
-                _logger.LogInformation(
-                    "Agent authenticated with API token. TokenName: {TokenName}, ConnectionId: {ConnectionId}",
-                    validToken.Name,
-                    Context.ConnectionId);
-
-                await Groups.AddToGroupAsync(Context.ConnectionId, AllAgentsGroup);
-                await base.OnConnectedAsync();
-                return;
-            }
-
-            _logger.LogWarning(
-                "Invalid or expired API token provided. ConnectionId: {ConnectionId}",
-                Context.ConnectionId);
-
-            // If certificate auth is required, reject
-            if (_securityOptions.RequireCertificateAuth)
-            {
-                Context.Abort();
-                return;
-            }
         }
 
         // No valid authentication provided
