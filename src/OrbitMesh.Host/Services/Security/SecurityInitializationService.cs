@@ -30,12 +30,22 @@ public sealed class SecurityInitializationService : BackgroundService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Initializes server keys synchronously before the server starts accepting connections.
+    /// This ensures keys are available when agents attempt to enroll.
+    /// </summary>
+    public override async Task StartAsync(CancellationToken cancellationToken)
+    {
+        // Initialize server keys BEFORE the server starts accepting connections
+        // This is critical - agents cannot enroll without server keys
+        await InitializeServerKeysAsync(cancellationToken);
+
+        await base.StartAsync(cancellationToken);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Initialize server keys
-        await InitializeServerKeysAsync(stoppingToken);
-
-        // Start cleanup loop
+        // Start cleanup loop (key initialization is already done in StartAsync)
         await RunCleanupLoopAsync(stoppingToken);
     }
 
@@ -68,13 +78,6 @@ public sealed class SecurityInitializationService : BackgroundService
             try
             {
                 await Task.Delay(cleanupInterval, stoppingToken);
-
-                // Cleanup expired bootstrap tokens
-                var tokensCleaned = await _bootstrapTokenService.CleanupExpiredAsync(stoppingToken);
-                if (tokensCleaned > 0)
-                {
-                    _logger.LogDebug("Cleaned up {Count} expired bootstrap tokens", tokensCleaned);
-                }
 
                 // Cleanup expired enrollments
                 var enrollmentsCleaned = await _enrollmentService.CleanupExpiredAsync(stoppingToken);

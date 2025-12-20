@@ -19,8 +19,8 @@ public sealed class OrbitMeshDbContext : DbContext
     public DbSet<WorkflowInstanceEntity> WorkflowInstances => Set<WorkflowInstanceEntity>();
     public DbSet<EventEntity> Events => Set<EventEntity>();
 
-    // Security entities
-    public DbSet<BootstrapTokenEntity> BootstrapTokens => Set<BootstrapTokenEntity>();
+    // Security entities (single bootstrap token)
+    public DbSet<BootstrapTokenEntity> BootstrapToken => Set<BootstrapTokenEntity>();
     public DbSet<EnrollmentEntity> Enrollments => Set<EnrollmentEntity>();
     public DbSet<NodeCertificateEntity> NodeCertificates => Set<NodeCertificateEntity>();
     public DbSet<ServerKeyInfoEntity> ServerKeyInfos => Set<ServerKeyInfoEntity>();
@@ -85,12 +85,10 @@ public sealed class OrbitMeshDbContext : DbContext
             entity.HasIndex(e => e.Timestamp);
         });
 
-        // BootstrapToken configuration
+        // BootstrapToken configuration (single token)
         modelBuilder.Entity<BootstrapTokenEntity>(entity =>
         {
             entity.HasIndex(e => e.TokenHash).IsUnique();
-            entity.HasIndex(e => e.ExpiresAt);
-            entity.HasIndex(e => e.IsConsumed);
         });
 
         // Enrollment configuration

@@ -1,4 +1,4 @@
-import type { Agent, Job, Workflow, WorkflowInstance, ServerStatus, ApiToken, BootstrapToken, CreateBootstrapTokenRequest } from '@/types'
+import type { Agent, Job, Workflow, WorkflowInstance, ServerStatus, ApiToken, BootstrapToken } from '@/types'
 
 const API_BASE = '/api'
 const AUTH_STORAGE_KEY = 'orbitmesh_auth'
@@ -24,6 +24,11 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
   if (!response.ok) {
     const error = await response.text()
     throw new Error(error || `API error: ${response.status}`)
+  }
+
+  // Handle 204 No Content responses
+  if (response.status === 204) {
+    return undefined as T
   }
 
   return response.json()
@@ -220,18 +225,27 @@ export function generateDockerCommand(serverUrl: string, token: string, options?
   return `docker run -d \\\n  ${envVars.join(' \\\n  ')} \\\n  ${image}`
 }
 
-// Bootstrap Tokens (TOFU enrollment)
-export async function getBootstrapTokens(): Promise<BootstrapToken[]> {
-  return fetchApi('/enrollment/bootstrap-tokens')
+// Bootstrap Token (TOFU enrollment) - Single reusable token
+export async function getBootstrapToken(): Promise<BootstrapToken> {
+  return fetchApi('/enrollment/bootstrap-token')
 }
 
-export async function createBootstrapToken(request: CreateBootstrapTokenRequest): Promise<BootstrapToken> {
-  return fetchApi('/enrollment/bootstrap-tokens', {
+export async function regenerateBootstrapToken(): Promise<BootstrapToken> {
+  return fetchApi('/enrollment/bootstrap-token/regenerate', {
     method: 'POST',
-    body: JSON.stringify(request),
   })
 }
 
-export async function revokeBootstrapToken(tokenId: string): Promise<void> {
-  await fetchApi(`/enrollment/bootstrap-tokens/${tokenId}`, { method: 'DELETE' })
+export async function setBootstrapTokenEnabled(enabled: boolean): Promise<void> {
+  await fetchApi('/enrollment/bootstrap-token/enabled', {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  })
+}
+
+export async function setBootstrapTokenAutoApprove(autoApprove: boolean): Promise<void> {
+  await fetchApi('/enrollment/bootstrap-token/auto-approve', {
+    method: 'PUT',
+    body: JSON.stringify({ autoApprove }),
+  })
 }

@@ -4,9 +4,10 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace OrbitMesh.Storage.Sqlite.Entities;
 
 /// <summary>
-/// Database entity for bootstrap tokens.
+/// Database entity for the single bootstrap token.
+/// There is only one bootstrap token per server.
 /// </summary>
-[Table("BootstrapTokens")]
+[Table("BootstrapToken")]
 public sealed class BootstrapTokenEntity
 {
     [Key]
@@ -20,24 +21,23 @@ public sealed class BootstrapTokenEntity
     [MaxLength(128)]
     public required string TokenHash { get; set; }
 
-    [MaxLength(500)]
-    public string? Description { get; set; }
-
-    public DateTimeOffset CreatedAt { get; set; }
-
-    public DateTimeOffset ExpiresAt { get; set; }
-
-    public bool IsConsumed { get; set; }
-
-    public DateTimeOffset? ConsumedAt { get; set; }
-
-    [MaxLength(64)]
-    public string? ConsumedByNodeId { get; set; }
+    /// <summary>
+    /// Whether the token is enabled for enrollment.
+    /// </summary>
+    public bool IsEnabled { get; set; }
 
     /// <summary>
-    /// JSON-serialized list of pre-approved capabilities.
+    /// Whether to auto-approve enrollments using this token.
     /// </summary>
-    public string? PreApprovedCapabilitiesJson { get; set; }
-
     public bool AutoApprove { get; set; }
+
+    /// <summary>
+    /// When the token was first created.
+    /// </summary>
+    public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>
+    /// When the token was last regenerated.
+    /// </summary>
+    public DateTimeOffset? LastRegeneratedAt { get; set; }
 }

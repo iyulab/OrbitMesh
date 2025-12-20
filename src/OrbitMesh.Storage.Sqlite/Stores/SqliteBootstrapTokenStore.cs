@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using OrbitMesh.Host.Services.Security;
@@ -10,12 +9,14 @@ namespace OrbitMesh.Storage.Sqlite.Stores;
 
 /// <summary>
 /// SQLite-backed implementation of bootstrap token service.
-/// Uses IDbContextFactory for proper scoping with SignalR hubs.
+/// Maintains a single, reusable bootstrap token with persistence.
 /// </summary>
-public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
+public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService, IDisposable
 {
     private readonly IDbContextFactory<OrbitMeshDbContext> _contextFactory;
     private readonly ILogger<SqliteBootstrapTokenStore> _logger;
+    private readonly SemaphoreSlim _lock = new(1, 1);
+    private bool _disposed;
 
     public SqliteBootstrapTokenStore(
         IDbContextFactory<OrbitMeshDbContext> contextFactory,
@@ -25,231 +26,240 @@ public sealed class SqliteBootstrapTokenStore : IBootstrapTokenService
         _logger = logger;
     }
 
-    /// <inheritdoc />
-    public async Task<BootstrapToken> CreateAsync(
-        CreateBootstrapTokenRequest request,
-        CancellationToken cancellationToken = default)
+    public void Dispose()
     {
-        var tokenId = Guid.NewGuid().ToString("N");
-        var tokenValue = GenerateSecureToken();
-        var tokenHash = HashToken(tokenValue);
-
-        var now = DateTimeOffset.UtcNow;
-        var entity = new BootstrapTokenEntity
+        if (!_disposed)
         {
-            Id = tokenId,
-            TokenHash = tokenHash,
-            Description = request.Description,
-            CreatedAt = now,
-            ExpiresAt = now.AddHours(request.ExpirationHours),
-            IsConsumed = false,
-            PreApprovedCapabilitiesJson = request.PreApprovedCapabilities.Count > 0
-                ? JsonSerializer.Serialize(request.PreApprovedCapabilities)
-                : null,
-            AutoApprove = request.AutoApprove
-        };
+            _lock.Dispose();
+            _disposed = true;
+        }
+    }
 
+    /// <inheritdoc />
+    public async Task<BootstrapToken> GetTokenAsync(CancellationToken cancellationToken = default)
+    {
         await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        dbContext.BootstrapTokens.Add(entity);
-        await dbContext.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation(
-            "Bootstrap token created. TokenId: {TokenId}, ExpiresAt: {ExpiresAt}, AutoApprove: {AutoApprove}",
-            tokenId,
-            entity.ExpiresAt,
-            entity.AutoApprove);
+        var entity = await dbContext.BootstrapToken
+            .AsNoTracking()
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (entity is null)
+        {
+            // Create initial token
+            return await CreateInitialTokenAsync(cancellationToken);
+        }
 
         return new BootstrapToken
         {
-            Id = tokenId,
-            Token = tokenValue, // Only returned on creation
-            TokenHash = tokenHash,
-            Description = request.Description,
-            CreatedAt = now,
-            ExpiresAt = entity.ExpiresAt,
-            IsConsumed = false,
-            PreApprovedCapabilities = request.PreApprovedCapabilities,
-            AutoApprove = request.AutoApprove
+            Id = entity.Id,
+            Token = null, // Never expose
+            TokenHash = null, // Don't expose hash
+            IsEnabled = entity.IsEnabled,
+            AutoApprove = entity.AutoApprove,
+            CreatedAt = entity.CreatedAt,
+            LastRegeneratedAt = entity.LastRegeneratedAt
         };
     }
 
     /// <inheritdoc />
-    public async Task<BootstrapTokenValidation?> ValidateAndConsumeAsync(
+    public async Task<BootstrapToken> RegenerateAsync(CancellationToken cancellationToken = default)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+            var now = DateTimeOffset.UtcNow;
+            var tokenValue = GenerateSecureToken();
+            var tokenHash = HashToken(tokenValue);
+
+            var entity = await dbContext.BootstrapToken.FirstOrDefaultAsync(cancellationToken);
+
+            if (entity is null)
+            {
+                entity = new BootstrapTokenEntity
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    TokenHash = tokenHash,
+                    IsEnabled = true,
+                    AutoApprove = true,
+                    CreatedAt = now,
+                    LastRegeneratedAt = now
+                };
+                dbContext.BootstrapToken.Add(entity);
+            }
+            else
+            {
+                entity.TokenHash = tokenHash;
+                entity.LastRegeneratedAt = now;
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Bootstrap token regenerated. TokenId: {TokenId}", entity.Id);
+
+            return new BootstrapToken
+            {
+                Id = entity.Id,
+                Token = tokenValue, // Only returned on regeneration
+                TokenHash = null,
+                IsEnabled = entity.IsEnabled,
+                AutoApprove = entity.AutoApprove,
+                CreatedAt = entity.CreatedAt,
+                LastRegeneratedAt = entity.LastRegeneratedAt
+            };
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task SetEnabledAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var entity = await dbContext.BootstrapToken.FirstOrDefaultAsync(cancellationToken);
+
+        if (entity is null)
+        {
+            // Create initial token first
+            await CreateInitialTokenAsync(cancellationToken);
+            entity = await dbContext.BootstrapToken.FirstOrDefaultAsync(cancellationToken);
+        }
+
+        entity!.IsEnabled = enabled;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Bootstrap token {Action}. TokenId: {TokenId}",
+            enabled ? "enabled" : "disabled",
+            entity.Id);
+    }
+
+    /// <inheritdoc />
+    public async Task SetAutoApproveAsync(bool autoApprove, CancellationToken cancellationToken = default)
+    {
+        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        var entity = await dbContext.BootstrapToken.FirstOrDefaultAsync(cancellationToken);
+
+        if (entity is null)
+        {
+            // Create initial token first
+            await CreateInitialTokenAsync(cancellationToken);
+            entity = await dbContext.BootstrapToken.FirstOrDefaultAsync(cancellationToken);
+        }
+
+        entity!.AutoApprove = autoApprove;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Bootstrap token auto-approve set to {AutoApprove}. TokenId: {TokenId}",
+            autoApprove,
+            entity.Id);
+    }
+
+    /// <inheritdoc />
+    public async Task<BootstrapTokenValidation?> ValidateAsync(
         string token,
         CancellationToken cancellationToken = default)
     {
         var tokenHash = HashToken(token);
-        var now = DateTimeOffset.UtcNow;
 
         await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
 
-        // Find token by hash using a transaction for atomicity
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-
-        try
-        {
-            var entity = await dbContext.BootstrapTokens
-                .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, cancellationToken);
-
-            if (entity is null)
-            {
-                _logger.LogWarning("Bootstrap token validation failed: Token not found");
-                return null;
-            }
-
-            if (entity.IsConsumed)
-            {
-                _logger.LogWarning(
-                    "Bootstrap token validation failed: Token already consumed. TokenId: {TokenId}",
-                    entity.Id);
-                return null;
-            }
-
-            if (entity.ExpiresAt < now)
-            {
-                _logger.LogWarning(
-                    "Bootstrap token validation failed: Token expired. TokenId: {TokenId}",
-                    entity.Id);
-                return null;
-            }
-
-            // Consume the token
-            entity.IsConsumed = true;
-            entity.ConsumedAt = now;
-
-            await dbContext.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-
-            _logger.LogInformation(
-                "Bootstrap token validated and consumed. TokenId: {TokenId}",
-                entity.Id);
-
-            var capabilities = string.IsNullOrEmpty(entity.PreApprovedCapabilitiesJson)
-                ? []
-                : JsonSerializer.Deserialize<List<string>>(entity.PreApprovedCapabilitiesJson) ?? [];
-
-            return new BootstrapTokenValidation
-            {
-                TokenId = entity.Id,
-                PreApprovedCapabilities = capabilities,
-                AutoApprove = entity.AutoApprove
-            };
-        }
-        catch (Exception ex)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            _logger.LogError(ex, "Error validating bootstrap token");
-            throw;
-        }
-    }
-
-    /// <inheritdoc />
-    public async Task<IReadOnlyList<BootstrapToken>> GetActiveTokensAsync(
-        CancellationToken cancellationToken = default)
-    {
-        var now = DateTimeOffset.UtcNow;
-
-        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
-
-        // SQLite DateTimeOffset comparison requires client-side evaluation
-        var entities = await dbContext.BootstrapTokens
+        var entity = await dbContext.BootstrapToken
             .AsNoTracking()
-            .ToListAsync(cancellationToken);
-
-        var filtered = entities
-            .Where(t => !t.IsConsumed && t.ExpiresAt > now)
-            .OrderByDescending(t => t.CreatedAt)
-            .ToList();
-
-        return filtered.Select(e => new BootstrapToken
-        {
-            Id = e.Id,
-            Token = null, // Never expose
-            TokenHash = null, // Don't expose hash
-            Description = e.Description,
-            CreatedAt = e.CreatedAt,
-            ExpiresAt = e.ExpiresAt,
-            IsConsumed = e.IsConsumed,
-            ConsumedAt = e.ConsumedAt,
-            ConsumedByNodeId = e.ConsumedByNodeId,
-            PreApprovedCapabilities = string.IsNullOrEmpty(e.PreApprovedCapabilitiesJson)
-                ? []
-                : JsonSerializer.Deserialize<List<string>>(e.PreApprovedCapabilitiesJson) ?? [],
-            AutoApprove = e.AutoApprove
-        }).ToList();
-    }
-
-    /// <inheritdoc />
-    public async Task<bool> RevokeAsync(
-        string tokenId,
-        CancellationToken cancellationToken = default)
-    {
-        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
-
-        var entity = await dbContext.BootstrapTokens
-            .FirstOrDefaultAsync(t => t.Id == tokenId, cancellationToken);
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (entity is null)
         {
-            return false;
+            _logger.LogWarning("Bootstrap token validation failed: No token configured");
+            return null;
         }
 
-        if (entity.IsConsumed)
+        if (!entity.IsEnabled)
         {
-            _logger.LogWarning(
-                "Cannot revoke bootstrap token: Already consumed. TokenId: {TokenId}",
-                tokenId);
-            return false;
+            _logger.LogWarning("Bootstrap token validation failed: Token is disabled");
+            return null;
         }
 
-        dbContext.BootstrapTokens.Remove(entity);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        if (entity.TokenHash != tokenHash)
+        {
+            _logger.LogWarning("Bootstrap token validation failed: Invalid token");
+            return null;
+        }
 
-        _logger.LogInformation("Bootstrap token revoked. TokenId: {TokenId}", tokenId);
-        return true;
+        _logger.LogInformation("Bootstrap token validated successfully. TokenId: {TokenId}", entity.Id);
+
+        return new BootstrapTokenValidation
+        {
+            TokenId = entity.Id,
+            AutoApprove = entity.AutoApprove
+        };
     }
 
-    /// <inheritdoc />
-    public async Task<int> CleanupExpiredAsync(CancellationToken cancellationToken = default)
+    private async Task<BootstrapToken> CreateInitialTokenAsync(CancellationToken cancellationToken)
     {
-        var now = DateTimeOffset.UtcNow;
-
-        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
-
-        // SQLite DateTimeOffset comparison requires client-side evaluation
-        var allTokens = await dbContext.BootstrapTokens
-            .ToListAsync(cancellationToken);
-
-        var expiredTokens = allTokens
-            .Where(t => t.ExpiresAt < now || t.IsConsumed)
-            .ToList();
-
-        if (expiredTokens.Count == 0)
+        await _lock.WaitAsync(cancellationToken);
+        try
         {
-            return 0;
-        }
+            await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
 
-        dbContext.BootstrapTokens.RemoveRange(expiredTokens);
-        await dbContext.SaveChangesAsync(cancellationToken);
+            // Double-check after acquiring lock
+            var existing = await dbContext.BootstrapToken.FirstOrDefaultAsync(cancellationToken);
+            if (existing is not null)
+            {
+                return new BootstrapToken
+                {
+                    Id = existing.Id,
+                    Token = null,
+                    TokenHash = null,
+                    IsEnabled = existing.IsEnabled,
+                    AutoApprove = existing.AutoApprove,
+                    CreatedAt = existing.CreatedAt,
+                    LastRegeneratedAt = existing.LastRegeneratedAt
+                };
+            }
 
-        _logger.LogInformation("Cleaned up {Count} expired/consumed bootstrap tokens", expiredTokens.Count);
-        return expiredTokens.Count;
-    }
+            var now = DateTimeOffset.UtcNow;
+            var tokenValue = GenerateSecureToken();
+            var tokenHash = HashToken(tokenValue);
 
-    /// <summary>
-    /// Marks a consumed token with the node ID that used it.
-    /// </summary>
-    public async Task MarkConsumedByNodeAsync(string tokenId, string nodeId, CancellationToken cancellationToken = default)
-    {
-        await using var dbContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+            var entity = new BootstrapTokenEntity
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                TokenHash = tokenHash,
+                IsEnabled = true,
+                AutoApprove = true,
+                CreatedAt = now,
+                LastRegeneratedAt = now
+            };
 
-        var entity = await dbContext.BootstrapTokens
-            .FirstOrDefaultAsync(t => t.Id == tokenId, cancellationToken);
-
-        if (entity is not null)
-        {
-            entity.ConsumedByNodeId = nodeId;
+            dbContext.BootstrapToken.Add(entity);
             await dbContext.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Bootstrap token initialized. TokenId: {TokenId}", entity.Id);
+
+            // Note: We don't return the token value here since this is called from GetTokenAsync
+            // which shouldn't expose the token value. Use RegenerateAsync to get the token value.
+            return new BootstrapToken
+            {
+                Id = entity.Id,
+                Token = null,
+                TokenHash = null,
+                IsEnabled = entity.IsEnabled,
+                AutoApprove = entity.AutoApprove,
+                CreatedAt = entity.CreatedAt,
+                LastRegeneratedAt = entity.LastRegeneratedAt
+            };
+        }
+        finally
+        {
+            _lock.Release();
         }
     }
 

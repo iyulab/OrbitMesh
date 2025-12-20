@@ -138,6 +138,26 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IBootstrapTokenService, SqliteBootstrapTokenStore>();
         services.AddSingleton<INodeCredentialService, SqliteNodeCredentialStore>();
         services.AddSingleton<INodeEnrollmentService, SqliteNodeEnrollmentStore>();
+
+        // Register SecurityInitializationService to initialize server keys on startup
+        // This is critical - server keys must be initialized before agents can enroll
+        RemoveExistingHostedService<SecurityInitializationService>(services);
+        services.AddHostedService<SecurityInitializationService>();
+    }
+
+    private static void RemoveExistingHostedService<TService>(IServiceCollection services)
+        where TService : class
+    {
+        // Remove any existing hosted service registration for TService
+        var descriptors = services
+            .Where(d => d.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService) &&
+                        d.ImplementationType == typeof(TService))
+            .ToList();
+
+        foreach (var descriptor in descriptors)
+        {
+            services.Remove(descriptor);
+        }
     }
 
     private static void RemoveExistingService<TService>(IServiceCollection services)

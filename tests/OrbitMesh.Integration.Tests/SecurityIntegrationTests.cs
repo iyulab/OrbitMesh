@@ -44,11 +44,8 @@ public class SecurityIntegrationTests
 
         await credentialService.InitializeServerKeysAsync();
 
-        // Step 1: Admin creates bootstrap token
-        var token = await bootstrapService.CreateAsync(new CreateBootstrapTokenRequest
-        {
-            Description = "New node deployment"
-        });
+        // Step 1: Admin regenerates bootstrap token to get the value
+        var token = await bootstrapService.RegenerateAsync();
         token.Token.Should().NotBeNullOrEmpty();
 
         // Step 2: Node generates key pair and requests enrollment
@@ -133,13 +130,9 @@ public class SecurityIntegrationTests
 
         await credentialService.InitializeServerKeysAsync();
 
-        // Step 1: Admin creates bootstrap token with auto-approval
-        var token = await bootstrapService.CreateAsync(new CreateBootstrapTokenRequest
-        {
-            Description = "Auto-approve deployment",
-            AutoApprove = true,
-            PreApprovedCapabilities = ["execute-jobs", "report-metrics"]
-        });
+        // Step 1: Admin regenerates bootstrap token with auto-approval enabled
+        var token = await bootstrapService.RegenerateAsync();
+        // Auto-approve is enabled by default
 
         // Step 2: Node generates key pair and requests enrollment
         var tempPath = Path.Combine(Path.GetTempPath(), $"test-auto-{Guid.NewGuid():N}.json");
@@ -209,12 +202,7 @@ public class SecurityIntegrationTests
         await credentialService.InitializeServerKeysAsync();
 
         // Create auto-approval token
-        var token = await bootstrapService.CreateAsync(new CreateBootstrapTokenRequest
-        {
-            Description = "Revoke test",
-            AutoApprove = true,
-            PreApprovedCapabilities = ["test"]
-        });
+        var token = await bootstrapService.RegenerateAsync();
 
         var tempPath = Path.Combine(Path.GetTempPath(), $"test-revoke-{Guid.NewGuid():N}.json");
         try
@@ -257,24 +245,41 @@ public class SecurityIntegrationTests
     }
 
     [Fact]
-    public async Task BootstrapToken_SingleUse_ShouldBeConsumed()
+    public async Task BootstrapToken_Reusable_ShouldNotBeConsumed()
     {
         // Arrange
         var bootstrapService = new InMemoryBootstrapTokenService(
             NullLogger<InMemoryBootstrapTokenService>.Instance);
 
-        var token = await bootstrapService.CreateAsync(new CreateBootstrapTokenRequest
-        {
-            Description = "Single use test"
-        });
+        var token = await bootstrapService.RegenerateAsync();
 
-        // Act - Use the token (ValidateAndConsumeAsync marks it as consumed)
-        var validation1 = await bootstrapService.ValidateAndConsumeAsync(token.Token!);
+        // Act - Validate the token multiple times (token is reusable, not consumed)
+        var validation1 = await bootstrapService.ValidateAsync(token.Token!);
         validation1.Should().NotBeNull();
 
-        // Assert - Token should be consumed, second validation fails
-        var validation2 = await bootstrapService.ValidateAndConsumeAsync(token.Token!);
-        validation2.Should().BeNull();
+        var validation2 = await bootstrapService.ValidateAsync(token.Token!);
+        validation2.Should().NotBeNull();
+
+        // Assert - Both validations should succeed (token is reusable)
+        validation1!.TokenId.Should().Be(token.Id);
+        validation2!.TokenId.Should().Be(token.Id);
+    }
+
+    [Fact]
+    public async Task BootstrapToken_WhenDisabled_ShouldFailValidation()
+    {
+        // Arrange
+        var bootstrapService = new InMemoryBootstrapTokenService(
+            NullLogger<InMemoryBootstrapTokenService>.Instance);
+
+        var token = await bootstrapService.RegenerateAsync();
+
+        // Act - Disable the token
+        await bootstrapService.SetEnabledAsync(false);
+
+        // Assert - Validation should fail when disabled
+        var validation = await bootstrapService.ValidateAsync(token.Token!);
+        validation.Should().BeNull();
     }
 
     [Fact]
@@ -292,11 +297,9 @@ public class SecurityIntegrationTests
 
         await credentialService.InitializeServerKeysAsync();
 
-        // First enrollment attempt
-        var token1 = await bootstrapService.CreateAsync(new CreateBootstrapTokenRequest
-        {
-            Description = "First attempt"
-        });
+        // Get bootstrap token
+        var token = await bootstrapService.RegenerateAsync();
+
         var request = new EnrollmentRequest
         {
             NodeId = "block-test-node",
@@ -306,7 +309,7 @@ public class SecurityIntegrationTests
             RequestedCapabilities = ["suspicious-cap"]
         };
 
-        var result1 = await enrollmentService.RequestEnrollmentAsync(request, token1.Id);
+        var result1 = await enrollmentService.RequestEnrollmentAsync(request, token.Id);
 
         // Admin rejects and blocks the node
         await enrollmentService.RejectEnrollmentAsync(
@@ -315,12 +318,8 @@ public class SecurityIntegrationTests
             "admin",
             blockNode: true);
 
-        // Second enrollment attempt with new token
-        var token2 = await bootstrapService.CreateAsync(new CreateBootstrapTokenRequest
-        {
-            Description = "Second attempt"
-        });
-        var result2 = await enrollmentService.RequestEnrollmentAsync(request, token2.Id);
+        // Second enrollment attempt with same token (token is reusable)
+        var result2 = await enrollmentService.RequestEnrollmentAsync(request, token.Id);
 
         // Assert - Should be blocked
         result2.Success.Should().BeFalse();

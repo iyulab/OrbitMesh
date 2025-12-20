@@ -15,160 +15,152 @@ public class BootstrapTokenServiceTests
     }
 
     [Fact]
-    public async Task CreateAsync_ShouldReturnValidToken()
+    public async Task GetTokenAsync_ShouldReturnToken()
     {
-        // Arrange
-        var request = new CreateBootstrapTokenRequest
-        {
-            Description = "Test token"
-        };
-
         // Act
-        var token = await _service.CreateAsync(request);
+        var token = await _service.GetTokenAsync();
 
         // Assert
         token.Should().NotBeNull();
         token.Id.Should().NotBeNullOrEmpty();
-        token.Token.Should().NotBeNullOrEmpty();
-        token.Description.Should().Be("Test token");
-        token.IsConsumed.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task CreateAsync_WithOptions_ShouldApplyOptions()
-    {
-        // Arrange
-        var request = new CreateBootstrapTokenRequest
-        {
-            Description = "Auto-approve token",
-            ExpirationHours = 2,
-            PreApprovedCapabilities = ["cap1", "cap2"],
-            AutoApprove = true
-        };
-
-        // Act
-        var token = await _service.CreateAsync(request);
-
-        // Assert
-        token.ExpiresAt.Should().BeCloseTo(DateTimeOffset.UtcNow.AddHours(2), TimeSpan.FromSeconds(5));
-        token.PreApprovedCapabilities.Should().BeEquivalentTo(["cap1", "cap2"]);
+        token.Token.Should().BeNull(); // Token value not exposed via GetToken
+        token.IsEnabled.Should().BeTrue();
         token.AutoApprove.Should().BeTrue();
     }
 
     [Fact]
-    public async Task ValidateAndConsumeAsync_WithValidToken_ShouldReturnValidationAndConsume()
+    public async Task RegenerateAsync_ShouldReturnNewTokenValue()
+    {
+        // Act
+        var token = await _service.RegenerateAsync();
+
+        // Assert
+        token.Should().NotBeNull();
+        token.Id.Should().NotBeNullOrEmpty();
+        token.Token.Should().NotBeNullOrEmpty(); // Token value only exposed on regenerate
+        token.Token.Should().StartWith("orbit_boot_");
+        token.LastRegeneratedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task RegenerateAsync_ShouldInvalidateOldToken()
     {
         // Arrange
-        var request = new CreateBootstrapTokenRequest { Description = "Test token" };
-        var token = await _service.CreateAsync(request);
+        var oldToken = await _service.RegenerateAsync();
+        var oldTokenValue = oldToken.Token!;
 
         // Act
-        var result = await _service.ValidateAndConsumeAsync(token.Token!);
+        var newToken = await _service.RegenerateAsync();
+
+        // Assert
+        newToken.Token.Should().NotBe(oldTokenValue);
+
+        // Old token should be invalid
+        var oldValidation = await _service.ValidateAsync(oldTokenValue);
+        oldValidation.Should().BeNull();
+
+        // New token should be valid
+        var newValidation = await _service.ValidateAsync(newToken.Token!);
+        newValidation.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task SetEnabledAsync_ShouldUpdateEnabledState()
+    {
+        // Arrange - ensure token exists
+        await _service.GetTokenAsync();
+
+        // Act
+        await _service.SetEnabledAsync(false);
+        var token = await _service.GetTokenAsync();
+
+        // Assert
+        token.IsEnabled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task SetAutoApproveAsync_ShouldUpdateAutoApproveState()
+    {
+        // Arrange - ensure token exists
+        await _service.GetTokenAsync();
+
+        // Act
+        await _service.SetAutoApproveAsync(false);
+        var token = await _service.GetTokenAsync();
+
+        // Assert
+        token.AutoApprove.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ValidateAsync_WithValidToken_ShouldReturnValidation()
+    {
+        // Arrange
+        var token = await _service.RegenerateAsync();
+
+        // Act
+        var result = await _service.ValidateAsync(token.Token!);
 
         // Assert
         result.Should().NotBeNull();
         result!.TokenId.Should().Be(token.Id);
+        result.AutoApprove.Should().BeTrue();
     }
 
     [Fact]
-    public async Task ValidateAndConsumeAsync_WithInvalidToken_ShouldReturnNull()
+    public async Task ValidateAsync_WithInvalidToken_ShouldReturnNull()
     {
         // Arrange
         var invalidToken = "invalid-token-value";
 
         // Act
-        var result = await _service.ValidateAndConsumeAsync(invalidToken);
+        var result = await _service.ValidateAsync(invalidToken);
 
         // Assert
         result.Should().BeNull();
     }
 
     [Fact]
-    public async Task ValidateAndConsumeAsync_CalledTwice_ShouldReturnNullSecondTime()
+    public async Task ValidateAsync_WhenDisabled_ShouldReturnNull()
     {
         // Arrange
-        var request = new CreateBootstrapTokenRequest { Description = "Single-use token" };
-        var token = await _service.CreateAsync(request);
+        var token = await _service.RegenerateAsync();
+        await _service.SetEnabledAsync(false);
 
         // Act
-        var firstResult = await _service.ValidateAndConsumeAsync(token.Token!);
-        var secondResult = await _service.ValidateAndConsumeAsync(token.Token!);
+        var result = await _service.ValidateAsync(token.Token!);
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ValidateAsync_ShouldReturnAutoApproveState()
+    {
+        // Arrange
+        var token = await _service.RegenerateAsync();
+        await _service.SetAutoApproveAsync(false);
+
+        // Act
+        var result = await _service.ValidateAsync(token.Token!);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.AutoApprove.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ValidateAsync_CanBeCalledMultipleTimes()
+    {
+        // Arrange - token is reusable, not consumed
+        var token = await _service.RegenerateAsync();
+
+        // Act
+        var firstResult = await _service.ValidateAsync(token.Token!);
+        var secondResult = await _service.ValidateAsync(token.Token!);
 
         // Assert
         firstResult.Should().NotBeNull();
-        secondResult.Should().BeNull(); // Already consumed
-    }
-
-    [Fact]
-    public async Task ValidateAndConsumeAsync_WithExpiredToken_ShouldReturnNull()
-    {
-        // Arrange
-        var request = new CreateBootstrapTokenRequest
-        {
-            Description = "Short-lived token",
-            ExpirationHours = 0 // Immediately expired
-        };
-        var token = await _service.CreateAsync(request);
-
-        // Act
-        var result = await _service.ValidateAndConsumeAsync(token.Token!);
-
-        // Assert
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task RevokeAsync_ShouldRemoveToken()
-    {
-        // Arrange
-        var request = new CreateBootstrapTokenRequest { Description = "Revocable token" };
-        var token = await _service.CreateAsync(request);
-
-        // Act
-        var revoked = await _service.RevokeAsync(token.Id);
-
-        // Assert
-        revoked.Should().BeTrue();
-        var result = await _service.ValidateAndConsumeAsync(token.Token!);
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task GetActiveTokensAsync_ShouldReturnOnlyActiveTokens()
-    {
-        // Arrange
-        var request1 = new CreateBootstrapTokenRequest { Description = "Token 1" };
-        var request2 = new CreateBootstrapTokenRequest { Description = "Token 2" };
-
-        var token1 = await _service.CreateAsync(request1);
-        var token2 = await _service.CreateAsync(request2);
-
-        // Consume token1
-        await _service.ValidateAndConsumeAsync(token1.Token!);
-
-        // Act
-        var activeTokens = await _service.GetActiveTokensAsync();
-
-        // Assert
-        activeTokens.Should().ContainSingle();
-        activeTokens[0].Id.Should().Be(token2.Id);
-    }
-
-    [Fact]
-    public async Task CleanupExpiredAsync_ShouldRemoveExpiredAndConsumedTokens()
-    {
-        // Arrange
-        var request = new CreateBootstrapTokenRequest
-        {
-            Description = "Token to cleanup",
-            ExpirationHours = 0 // Immediately expired
-        };
-        await _service.CreateAsync(request);
-
-        // Act
-        var cleaned = await _service.CleanupExpiredAsync();
-
-        // Assert
-        cleaned.Should().BeGreaterThanOrEqualTo(1);
+        secondResult.Should().NotBeNull(); // Token is not consumed, can be reused
     }
 }

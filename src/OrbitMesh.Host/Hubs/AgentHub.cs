@@ -148,13 +148,13 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
         // Priority 2: Bootstrap token authentication (for enrollment)
         if (!string.IsNullOrEmpty(bootstrapToken))
         {
-            var validation = await _bootstrapTokenService.ValidateAndConsumeAsync(bootstrapToken);
+            var validation = await _bootstrapTokenService.ValidateAsync(bootstrapToken);
             if (validation is not null)
             {
                 Context.Items["BootstrapTokenId"] = validation.TokenId;
                 Context.Items["AuthType"] = "Bootstrap";
                 Context.Items["IsEnrolled"] = false;
-                Context.Items["AllowedCapabilities"] = validation.AllowedCapabilities;
+                Context.Items["AutoApprove"] = validation.AutoApprove;
 
                 _logger.LogInformation(
                     "Node connected with bootstrap token for enrollment. TokenId: {TokenId}, ConnectionId: {ConnectionId}",

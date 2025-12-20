@@ -34,65 +34,79 @@ public class EnrollmentController : ControllerBase
         _logger = logger;
     }
 
-    #region Bootstrap Tokens (Admin)
+    #region Bootstrap Token (Admin)
 
     /// <summary>
-    /// Creates a new bootstrap token for node enrollment.
+    /// Gets the current bootstrap token configuration.
+    /// Token value is never returned - use Regenerate to get a new token.
     /// </summary>
-    /// <param name="request">Token creation request.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The created token (value only shown once).</returns>
-    [HttpPost("bootstrap-tokens")]
-    [ProducesResponseType(typeof(BootstrapToken), StatusCodes.Status201Created)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> CreateBootstrapToken(
-        [FromBody] CreateBootstrapTokenRequest? request,
+    /// <returns>Bootstrap token configuration (without token value).</returns>
+    [HttpGet("bootstrap-token")]
+    [ProducesResponseType(typeof(BootstrapToken), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetBootstrapToken(
         CancellationToken cancellationToken = default)
     {
-        request ??= new CreateBootstrapTokenRequest();
+        var token = await _bootstrapTokenService.GetTokenAsync(cancellationToken);
+        return Ok(token);
+    }
 
-        var token = await _bootstrapTokenService.CreateAsync(request, cancellationToken);
+    /// <summary>
+    /// Regenerates the bootstrap token.
+    /// The old token becomes invalid immediately.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The new token (value only shown once).</returns>
+    [HttpPost("bootstrap-token/regenerate")]
+    [ProducesResponseType(typeof(BootstrapToken), StatusCodes.Status200OK)]
+    public async Task<IActionResult> RegenerateBootstrapToken(
+        CancellationToken cancellationToken = default)
+    {
+        var token = await _bootstrapTokenService.RegenerateAsync(cancellationToken);
 
         _logger.LogInformation(
-            "Bootstrap token created via API. TokenId: {TokenId}",
+            "Bootstrap token regenerated via API. TokenId: {TokenId}",
             token.Id);
 
-        return CreatedAtAction(nameof(GetActiveBootstrapTokens), token);
+        return Ok(token);
     }
 
     /// <summary>
-    /// Gets all active bootstrap tokens.
+    /// Sets whether the bootstrap token is enabled.
     /// </summary>
+    /// <param name="request">Enabled state.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>List of active tokens (without token values).</returns>
-    [HttpGet("bootstrap-tokens")]
-    [ProducesResponseType(typeof(IReadOnlyList<BootstrapToken>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetActiveBootstrapTokens(
-        CancellationToken cancellationToken = default)
-    {
-        var tokens = await _bootstrapTokenService.GetActiveTokensAsync(cancellationToken);
-        return Ok(tokens);
-    }
-
-    /// <summary>
-    /// Revokes a bootstrap token.
-    /// </summary>
-    /// <param name="tokenId">Token ID to revoke.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>No content if successful.</returns>
-    [HttpDelete("bootstrap-tokens/{tokenId}")]
+    [HttpPut("bootstrap-token/enabled")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> RevokeBootstrapToken(
-        string tokenId,
+    public async Task<IActionResult> SetBootstrapTokenEnabled(
+        [FromBody] SetEnabledRequest request,
         CancellationToken cancellationToken = default)
     {
-        var revoked = await _bootstrapTokenService.RevokeAsync(tokenId, cancellationToken);
+        await _bootstrapTokenService.SetEnabledAsync(request.Enabled, cancellationToken);
 
-        if (!revoked)
-        {
-            return NotFound(new { Error = "Token not found or already consumed" });
-        }
+        _logger.LogInformation(
+            "Bootstrap token {Action} via API",
+            request.Enabled ? "enabled" : "disabled");
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Sets whether enrollments using the bootstrap token are auto-approved.
+    /// </summary>
+    /// <param name="request">Auto-approve state.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    [HttpPut("bootstrap-token/auto-approve")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> SetBootstrapTokenAutoApprove(
+        [FromBody] SetAutoApproveRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        await _bootstrapTokenService.SetAutoApproveAsync(request.AutoApprove, cancellationToken);
+
+        _logger.LogInformation(
+            "Bootstrap token auto-approve set to {AutoApprove} via API",
+            request.AutoApprove);
 
         return NoContent();
     }
@@ -392,4 +406,26 @@ public sealed record RevokeCertificateRequest
     /// Revocation reason (required).
     /// </summary>
     public required string Reason { get; init; }
+}
+
+/// <summary>
+/// Request to set bootstrap token enabled state.
+/// </summary>
+public sealed record SetEnabledRequest
+{
+    /// <summary>
+    /// Whether the token is enabled.
+    /// </summary>
+    public bool Enabled { get; init; }
+}
+
+/// <summary>
+/// Request to set bootstrap token auto-approve state.
+/// </summary>
+public sealed record SetAutoApproveRequest
+{
+    /// <summary>
+    /// Whether enrollments are auto-approved.
+    /// </summary>
+    public bool AutoApprove { get; init; }
 }
