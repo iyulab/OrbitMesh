@@ -1,4 +1,5 @@
 using System.Globalization;
+using Microsoft.Extensions.FileProviders;
 using OrbitMesh.Core.Platform;
 using OrbitMesh.Host.Authentication;
 using OrbitMesh.Host.Extensions;
@@ -139,9 +140,19 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
 
-    // Serve static files (SPA)
-    app.UseDefaultFiles();
-    app.UseStaticFiles();
+    // Serve embedded static files (SPA)
+    var embeddedProvider = new ManifestEmbeddedFileProvider(
+        typeof(Program).Assembly,
+        "wwwroot");
+
+    app.UseDefaultFiles(new DefaultFilesOptions
+    {
+        FileProvider = embeddedProvider
+    });
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = embeddedProvider
+    });
 
     // Map endpoints
     app.MapOrbitMeshHub("/agent");
@@ -150,7 +161,20 @@ try
     app.MapHealthChecks("/health");
 
     // SPA fallback - serve index.html for client-side routes
-    app.MapFallbackToFile("index.html");
+    app.MapFallback(async context =>
+    {
+        var file = embeddedProvider.GetFileInfo("index.html");
+        if (file.Exists)
+        {
+            context.Response.ContentType = "text/html";
+            await using var stream = file.CreateReadStream();
+            await stream.CopyToAsync(context.Response.Body);
+        }
+        else
+        {
+            context.Response.StatusCode = 404;
+        }
+    });
 
     Log.Information("OrbitMesh Server listening on {Urls}", string.Join(", ", app.Urls));
     await app.RunAsync();

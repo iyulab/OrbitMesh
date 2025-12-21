@@ -14,13 +14,25 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
 
+    <!-- Embed wwwroot as resources for single-file deployment -->
+    <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+
+    <!-- Exclude wwwroot from publish (it's embedded in the assembly) -->
+    <EnableDefaultContentItems>false</EnableDefaultContentItems>
+
     <!-- Runtime identifier for Windows -->
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" />
     <PackageReference Include="Serilog.AspNetCore" />
     <PackageReference Include="Swashbuckle.AspNetCore" />
+  </ItemGroup>
+
+  <!-- Embed wwwroot as resources -->
+  <ItemGroup>
+    <EmbeddedResource Include="wwwroot\**\*" />
   </ItemGroup>
 
   <ItemGroup>
@@ -29,7 +41,7 @@
     <ProjectReference Include="..\..\src\OrbitMesh.Update\OrbitMesh.Update.csproj" />
   </ItemGroup>
 
-  <!-- Copy appsettings to publish folder -->
+  <!-- Copy only main appsettings to publish folder -->
   <ItemGroup>
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -37,8 +49,22 @@
     </None>
     <None Update="appsettings.*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
     </None>
   </ItemGroup>
+
+  <!-- Exclude unnecessary files from publish -->
+  <ItemGroup>
+    <Content Update="web.config">
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- Disable static web assets (using embedded resources instead) -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+    <!-- Disable web.config generation (not using IIS hosting) -->
+    <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
+  </PropertyGroup>
 
 </Project>
