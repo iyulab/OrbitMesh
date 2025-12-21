@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using OrbitMesh.Core.Models;
 using OrbitMesh.Host.Services;
 
 namespace OrbitMesh.Host.Controllers;
@@ -323,34 +324,4 @@ public sealed record FileUploadResponse
     public string? Checksum { get; init; }
 }
 
-/// <summary>
-/// Sync manifest containing file list and checksums.
-/// </summary>
-public sealed class SyncManifest
-{
-    /// <summary>
-    /// List of files in the directory.
-    /// </summary>
-    public IList<SyncFileEntry> Files { get; } = new List<SyncFileEntry>();
-}
-
-/// <summary>
-/// Entry in sync manifest.
-/// </summary>
-public sealed class SyncFileEntry
-{
-    /// <summary>
-    /// Relative path from manifest root.
-    /// </summary>
-    public required string Path { get; set; }
-
-    /// <summary>
-    /// SHA256 checksum of the file.
-    /// </summary>
-    public string? Checksum { get; set; }
-
-    /// <summary>
-    /// File size in bytes.
-    /// </summary>
-    public long Size { get; set; }
-}
+// SyncManifest and SyncFileEntry are now defined in OrbitMesh.Core.Models

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using OrbitMesh.Core.Contracts;
 using OrbitMesh.Core.Enums;
 using OrbitMesh.Core.Models;
+using OrbitMesh.Node.Resilience;
 using OrbitMesh.Node.Security;
 
 namespace OrbitMesh.Node;
@@ -20,6 +21,8 @@ public sealed class MeshAgent : IMeshAgent
     private readonly NodeCredentialManager _credentialManager;
     private readonly EnrollmentService _enrollmentService;
     private readonly MeshAgentConfiguration _config;
+    private readonly ResilienceOptions _resilienceOptions;
+    private readonly CommandQueue _commandQueue;
     private readonly JobCancellationManager _cancellationManager = new();
     private readonly TaskCompletionSource _shutdownTcs = new();
     private readonly CancellationTokenSource _heartbeatCts = new();
@@ -42,6 +45,8 @@ public sealed class MeshAgent : IMeshAgent
         NodeCredentialManager credentialManager,
         EnrollmentService enrollmentService,
         MeshAgentConfiguration config,
+        ResilienceOptions resilienceOptions,
+        CommandQueue commandQueue,
         ILogger<MeshAgent> logger)
     {
         _connection = connection;
@@ -50,6 +55,8 @@ public sealed class MeshAgent : IMeshAgent
         _credentialManager = credentialManager;
         _enrollmentService = enrollmentService;
         _config = config;
+        _resilienceOptions = resilienceOptions;
+        _commandQueue = commandQueue;
         _logger = logger;
 
         ConfigureConnection();
@@ -363,12 +370,109 @@ public sealed class MeshAgent : IMeshAgent
             if (!result.Success)
             {
                 _logger.LogError("Re-registration failed: {Error}", result.Error);
+                return;
             }
+
+            // Drain queued commands after successful re-registration
+            await DrainCommandQueueAsync();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to re-register after reconnection");
         }
+    }
+
+    /// <summary>
+    /// Drains the command queue, executing all queued commands.
+    /// </summary>
+    private async Task DrainCommandQueueAsync()
+    {
+        if (_commandQueue.IsEmpty)
+        {
+            return;
+        }
+
+        _logger.LogInformation(
+            "Draining command queue. {Count} commands queued.",
+            _commandQueue.Count);
+
+        var commands = _commandQueue.DequeueAll();
+
+        foreach (var command in commands)
+        {
+            try
+            {
+                await _connection.InvokeCoreAsync(
+                    command.MethodName,
+                    command.Arguments);
+
+                _logger.LogDebug(
+                    "Queued command executed: {Method}",
+                    command.MethodName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to execute queued command: {Method}. Retry: {Retry}",
+                    command.MethodName,
+                    command.RetryCount);
+
+                // Re-queue if we still have retries left
+                if (command.RetryCount < 3)
+                {
+                    command.RetryCount++;
+                    _commandQueue.Enqueue(command.MethodName, command.Arguments);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Invokes a hub method, queuing the call if disconnected.
+    /// </summary>
+    /// <param name="methodName">The method name.</param>
+    /// <param name="args">The arguments.</param>
+    /// <returns>True if the call was executed or queued successfully.</returns>
+    private async Task<bool> InvokeOrQueueAsync(string methodName, params object?[] args)
+    {
+        if (IsConnected)
+        {
+            try
+            {
+                await _connection.InvokeCoreAsync(methodName, args);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to invoke {Method}. Connection may be unstable.",
+                    methodName);
+
+                // Try to queue if configured
+                if (_resilienceOptions.QueueCommandsWhenDisconnected)
+                {
+                    return _commandQueue.Enqueue(methodName, args!);
+                }
+
+                return false;
+            }
+        }
+
+        // Queue for later if disconnected
+        if (_resilienceOptions.QueueCommandsWhenDisconnected)
+        {
+            _logger.LogDebug(
+                "Queueing command {Method} for later execution (disconnected).",
+                methodName);
+            return _commandQueue.Enqueue(methodName, args!);
+        }
+
+        _logger.LogWarning(
+            "Cannot execute {Method}: disconnected and queuing is disabled.",
+            methodName);
+        return false;
     }
 
     /// <inheritdoc />
@@ -392,6 +496,9 @@ public sealed class MeshAgent : IMeshAgent
 
         // Dispose credential manager
         _credentialManager.Dispose();
+
+        // Dispose command queue
+        _commandQueue.Dispose();
 
         _shutdownTcs.TrySetResult();
     }

@@ -1,4 +1,4 @@
-using OrbitMesh.Host.Controllers;
+using OrbitMesh.Core.Models;
 
 namespace OrbitMesh.Host.Services;
 

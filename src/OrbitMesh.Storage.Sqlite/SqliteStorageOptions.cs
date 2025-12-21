@@ -49,4 +49,10 @@ public sealed class SqliteStorageOptions
     /// Default: true
     /// </summary>
     public bool EnableCoreStores { get; set; } = true;
+
+    /// <summary>
+    /// Whether to enable deployment profile storage (deployment profiles, executions).
+    /// Default: true (recommended for deployment features)
+    /// </summary>
+    public bool EnableDeploymentStores { get; set; } = true;
 }

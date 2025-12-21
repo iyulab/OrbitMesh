@@ -1,0 +1,195 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Directory.Build.props'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force release even if version exists'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_QUALITY: 'preview'
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      should_release: ${{ steps.check.outputs.should_release }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version from Directory.Build.props
+        id: extract
+        run: |
+          VERSION=$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Detected version: $VERSION"
+
+      - name: Check if release exists
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.extract.outputs.version }}"
+
+          echo "🔍 Checking if v$VERSION exists..."
+
+          if gh release view "v$VERSION" &>/dev/null; then
+            echo "⚠️ Release v$VERSION already exists"
+            if [[ "${{ inputs.force }}" == "true" ]]; then
+              echo "🔄 Force release enabled, will recreate"
+              gh release delete "v$VERSION" -y || true
+              echo "should_release=true" >> $GITHUB_OUTPUT
+            else
+              echo "⏭️ Skipping release (use workflow_dispatch with force=true to recreate)"
+              echo "should_release=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "✅ Version v$VERSION is new, will release"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-latest
+            rid: osx-x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: ${{ env.DOTNET_QUALITY }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build orbit-host
+        run: |
+          dotnet publish products/orbit-host/orbit-host.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:EnableCompressionInSingleFile=true \
+            -p:DebugType=none \
+            -o ./publish/orbit-host
+
+      - name: Build orbit-node
+        run: |
+          dotnet publish products/orbit-node/orbit-node.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:EnableCompressionInSingleFile=true \
+            -p:DebugType=none \
+            -o ./publish/orbit-node
+
+      - name: Create archives (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd publish
+          Compress-Archive -Path orbit-host\* -DestinationPath orbit-host-${{ matrix.rid }}.zip
+          Compress-Archive -Path orbit-node\* -DestinationPath orbit-node-${{ matrix.rid }}.zip
+        shell: pwsh
+
+      - name: Create archives (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd publish
+          zip -r orbit-host-${{ matrix.rid }}.zip orbit-host/
+          zip -r orbit-node-${{ matrix.rid }}.zip orbit-node/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.rid }}
+          path: publish/*.zip
+          retention-days: 1
+
+  release:
+    needs: [check-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+
+          echo "📦 Creating release v$VERSION"
+
+          gh release create "v$VERSION" \
+            --title "OrbitMesh v$VERSION" \
+            --generate-notes \
+            artifacts/*.zip
+
+          echo ""
+          echo "✅ Release created successfully!"
+          echo ""
+          echo "📥 Download links:"
+          echo "  - orbit-host-win-x64.zip"
+          echo "  - orbit-host-linux-x64.zip"
+          echo "  - orbit-host-osx-x64.zip"
+          echo "  - orbit-node-win-x64.zip"
+          echo "  - orbit-node-linux-x64.zip"
+          echo "  - orbit-node-osx-x64.zip"
+
+  skip-notification:
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'false'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Notify skip
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+          echo "⏭️ Release skipped"
+          echo ""
+          echo "Version v$VERSION already exists."
+          echo ""
+          echo "To recreate this release:"
+          echo "  1. Go to Actions → Release"
+          echo "  2. Click 'Run workflow'"
+          echo "  3. Check 'Force release even if version exists'"
+          echo ""
+          echo "Or update the version in Directory.Build.props to release a new version."

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OrbitMesh.Core.Storage;
+using OrbitMesh.Storage.Sqlite.Migrations;
 using OrbitMesh.Storage.Sqlite.Stores;
 
 namespace OrbitMesh.Storage.Sqlite;
@@ -14,6 +15,7 @@ public sealed class SqliteOrbitMeshStorage : IOrbitMeshStorage
 {
     private readonly IDbContextFactory<OrbitMeshDbContext> _contextFactory;
     private readonly SqliteStorageOptions _options;
+    private readonly SchemaMigrator _migrator;
     private readonly ILogger<SqliteOrbitMeshStorage> _logger;
 
     public IJobStore Jobs { get; }
@@ -24,10 +26,12 @@ public sealed class SqliteOrbitMeshStorage : IOrbitMeshStorage
     public SqliteOrbitMeshStorage(
         IDbContextFactory<OrbitMeshDbContext> contextFactory,
         IOptions<SqliteStorageOptions> options,
+        SchemaMigrator migrator,
         ILogger<SqliteOrbitMeshStorage> logger)
     {
         _contextFactory = contextFactory;
         _options = options.Value;
+        _migrator = migrator;
         _logger = logger;
 
         Jobs = new SqliteJobStore(contextFactory);
@@ -50,6 +54,9 @@ public sealed class SqliteOrbitMeshStorage : IOrbitMeshStorage
 
             // Then, ensure any missing tables are created
             await EnsureMissingTablesAsync(context, ct);
+
+            // Run schema migrations for column-level changes
+            await _migrator.MigrateAsync(context, ct);
         }
 
         // Configure SQLite for optimal performance

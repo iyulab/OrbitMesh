@@ -7,6 +7,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using OrbitMesh.Host.Hubs;
 using OrbitMesh.Host.Services;
 using OrbitMesh.Host.Services.Adapters;
+using OrbitMesh.Host.Services.Deployment;
 using OrbitMesh.Host.Services.Workflows;
 using OrbitMesh.Workflows;
 using OrbitMesh.Workflows.Execution;
@@ -366,6 +367,43 @@ public sealed class OrbitMeshServerBuilder
             }
             _services.AddSingleton(typeof(IApprovalNotifier), options.ApprovalNotifierType);
         }
+
+        return this;
+    }
+
+    /// <summary>
+    /// Adds deployment profile management to the server.
+    /// </summary>
+    /// <returns>The builder for chaining.</returns>
+    public OrbitMeshServerBuilder AddDeployments()
+    {
+        return AddDeployments(_ => { });
+    }
+
+    /// <summary>
+    /// Adds deployment profile management with custom configuration.
+    /// </summary>
+    /// <param name="configure">Configuration action for deployment options.</param>
+    /// <returns>The builder for chaining.</returns>
+    public OrbitMeshServerBuilder AddDeployments(Action<DeploymentOptions> configure)
+    {
+        // Configure options
+        _services.Configure(configure);
+
+        // Ensure file storage is registered (required for deployment file operations)
+        var hasStorage = _services.Any(d => d.ServiceType == typeof(IFileStorageService));
+        if (!hasStorage)
+        {
+            // Use default deployment storage path
+            var defaultPath = Path.Combine(AppContext.BaseDirectory, "deployments");
+            AddFileStorage(defaultPath);
+        }
+
+        // Register deployment services
+        _services.AddSingleton<IDeploymentService, DeploymentService>();
+
+        // Register file watcher as hosted service
+        _services.AddHostedService<DeploymentProfileWatcherService>();
 
         return this;
     }

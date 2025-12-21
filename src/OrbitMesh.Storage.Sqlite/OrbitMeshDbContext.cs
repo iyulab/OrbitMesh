@@ -26,6 +26,13 @@ public sealed class OrbitMeshDbContext : DbContext
     public DbSet<ServerKeyInfoEntity> ServerKeyInfos => Set<ServerKeyInfoEntity>();
     public DbSet<BlockedNodeEntity> BlockedNodes => Set<BlockedNodeEntity>();
 
+    // Deployment entities
+    public DbSet<DeploymentProfileEntity> DeploymentProfiles => Set<DeploymentProfileEntity>();
+    public DbSet<DeploymentExecutionEntity> DeploymentExecutions => Set<DeploymentExecutionEntity>();
+
+    // Schema versioning
+    public DbSet<SchemaVersionEntity> SchemaVersion => Set<SchemaVersionEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -121,6 +128,29 @@ public sealed class OrbitMeshDbContext : DbContext
         modelBuilder.Entity<BlockedNodeEntity>(entity =>
         {
             entity.HasIndex(e => e.BlockedAt);
+        });
+
+        // DeploymentProfile configuration
+        modelBuilder.Entity<DeploymentProfileEntity>(entity =>
+        {
+            entity.HasIndex(e => e.Name);
+            entity.HasIndex(e => e.TargetAgentPattern);
+            entity.HasIndex(e => e.IsEnabled);
+            entity.HasIndex(e => e.CreatedAt);
+        });
+
+        // DeploymentExecution configuration
+        modelBuilder.Entity<DeploymentExecutionEntity>(entity =>
+        {
+            entity.HasIndex(e => e.ProfileId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.StartedAt);
+            entity.HasIndex(e => new { e.ProfileId, e.StartedAt });
+
+            entity.HasOne(e => e.Profile)
+                .WithMany(p => p.Executions)
+                .HasForeignKey(e => e.ProfileId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

@@ -9,6 +9,7 @@ import JobDetail from './pages/JobDetail'
 import Workflows from './pages/Workflows'
 import WorkflowCreate from './pages/WorkflowCreate'
 import WorkflowEdit from './pages/WorkflowEdit'
+import Deployments from './pages/Deployments'
 import Settings from './pages/Settings'
 import Login from './pages/Login'
 import { SignalRProvider } from './contexts/SignalRContext'
@@ -54,6 +55,7 @@ function AppContent() {
           <Route path="jobs/:jobId" element={<JobDetail />} />
           <Route path="workflows" element={<Workflows />} />
           <Route path="workflows/:workflowId" element={<Workflows />} />
+          <Route path="deployments" element={<Deployments />} />
           <Route path="settings" element={<Settings />} />
         </Route>
         <Route path="*" element={<NotFound />} />

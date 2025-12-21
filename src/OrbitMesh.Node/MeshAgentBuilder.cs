@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using OrbitMesh.Core.Contracts;
 using OrbitMesh.Core.Enums;
 using OrbitMesh.Core.Models;
+using OrbitMesh.Node.Resilience;
 using OrbitMesh.Node.Security;
 
 namespace OrbitMesh.Node;
@@ -31,6 +32,7 @@ public sealed class MeshAgentBuilder
     private Action<IHubConnectionBuilder>? _configureConnection;
     private TimeSpan _connectionTimeout = TimeSpan.FromSeconds(30);
     private TimeSpan _enrollmentTimeout = TimeSpan.FromHours(24);
+    private ResilienceOptions _resilienceOptions = ResilienceOptions.Default;
 
     /// <summary>
     /// Creates a new MeshAgentBuilder.
@@ -293,6 +295,51 @@ public sealed class MeshAgentBuilder
     }
 
     /// <summary>
+    /// Configures resilience options for the agent.
+    /// </summary>
+    /// <param name="options">The resilience options.</param>
+    public MeshAgentBuilder WithResilienceOptions(ResilienceOptions options)
+    {
+        _resilienceOptions = options ?? throw new ArgumentNullException(nameof(options));
+        return this;
+    }
+
+    /// <summary>
+    /// Configures resilience options for the agent using an action.
+    /// </summary>
+    /// <param name="configure">Action to configure resilience options.</param>
+    public MeshAgentBuilder WithResilienceOptions(Action<ResilienceOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+
+        // Create a new options instance with default values and apply configuration
+        // Note: Since ResilienceOptions is a record with init-only properties,
+        // we need to create a new instance with the desired values
+        var options = ResilienceOptions.Default;
+        configure(options);
+        _resilienceOptions = options;
+        return this;
+    }
+
+    /// <summary>
+    /// Enables high-availability resilience mode.
+    /// </summary>
+    public MeshAgentBuilder WithHighAvailability()
+    {
+        _resilienceOptions = ResilienceOptions.HighAvailability;
+        return this;
+    }
+
+    /// <summary>
+    /// Enables conservative resilience mode for resource-constrained environments.
+    /// </summary>
+    public MeshAgentBuilder WithConservativeResilience()
+    {
+        _resilienceOptions = ResilienceOptions.Conservative;
+        return this;
+    }
+
+    /// <summary>
     /// Builds the agent without connecting.
     /// </summary>
     public IMeshAgent Build()
@@ -301,13 +348,16 @@ public sealed class MeshAgentBuilder
         var credentialManagerLogger = _loggerFactory.CreateLogger<NodeCredentialManager>();
         var credentialManager = new NodeCredentialManager(_credentialsPath, credentialManagerLogger);
 
+        // Create retry policy with exponential backoff
+        var retryPolicy = new ExponentialBackoffRetryPolicy(_resilienceOptions);
+
         var connectionBuilder = new HubConnectionBuilder()
             .WithUrl(_serverUrl, options =>
             {
                 // Set up authentication token provider
                 options.AccessTokenProvider = () => GetAccessTokenAsync(credentialManager);
             })
-            .WithAutomaticReconnect()
+            .WithAutomaticReconnect(retryPolicy)
             .AddMessagePackProtocol();
 
         _configureConnection?.Invoke(connectionBuilder);
@@ -341,6 +391,10 @@ public sealed class MeshAgentBuilder
 
         var logger = _loggerFactory.CreateLogger<MeshAgent>();
 
+        // Create command queue for resilience
+        var commandQueueLogger = _loggerFactory.CreateLogger<CommandQueue>();
+        var commandQueue = new CommandQueue(_resilienceOptions, commandQueueLogger);
+
         return new MeshAgent(
             connection,
             agentInfo,
@@ -348,6 +402,8 @@ public sealed class MeshAgentBuilder
             credentialManager,
             enrollmentService,
             config,
+            _resilienceOptions,
+            commandQueue,
             logger);
     }
 

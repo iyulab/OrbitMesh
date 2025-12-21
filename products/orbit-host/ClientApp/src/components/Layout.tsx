@@ -4,6 +4,7 @@ import {
   Server,
   PlayCircle,
   GitBranch,
+  Rocket,
   Settings,
   Orbit,
   Sun,
@@ -28,6 +29,7 @@ const navItems = [
   { to: '/agents', icon: Server, label: 'Agents' },
   { to: '/jobs', icon: PlayCircle, label: 'Jobs' },
   { to: '/workflows', icon: GitBranch, label: 'Workflows' },
+  { to: '/deployments', icon: Rocket, label: 'Deployments' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 

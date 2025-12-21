@@ -1,7 +1,8 @@
 using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
-using OrbitMesh.Node.BuiltIn.Models;
 using OrbitMesh.Core.Contracts;
+using OrbitMesh.Core.Models;
+using OrbitMesh.Node.BuiltIn.Models;
 
 namespace OrbitMesh.Node.BuiltIn.Handlers;
 
@@ -591,8 +592,12 @@ public sealed class FileSyncHandler : IRequestResponseHandler<FileSyncResult>
             }
 
             // Delete orphaned files if requested
+            // Safety: Skip files modified within the last 5 seconds to avoid race conditions
+            // with concurrent file operations from other agents or processes
             if (request.DeleteOrphans)
             {
+                var safetyThreshold = DateTime.UtcNow.AddSeconds(-5);
+
                 foreach (var localFile in Directory.EnumerateFiles(request.Destination, "*",
                              SearchOption.AllDirectories))
                 {
@@ -601,6 +606,17 @@ public sealed class FileSyncHandler : IRequestResponseHandler<FileSyncResult>
                     {
                         try
                         {
+                            // Safety check: don't delete recently modified files
+                            // This prevents race conditions in multi-agent sync scenarios
+                            var fileInfo = new FileInfo(localFile);
+                            if (fileInfo.LastWriteTimeUtc > safetyThreshold)
+                            {
+                                _logger.LogDebug(
+                                    "Skipping orphan deletion for recently modified file: {Path}",
+                                    relativePath);
+                                continue;
+                            }
+
                             File.Delete(localFile);
                             deleted++;
                         }
@@ -669,20 +685,4 @@ public sealed class FileSyncHandler : IRequestResponseHandler<FileSyncResult>
     }
 }
 
-/// <summary>
-/// Sync manifest for file synchronization.
-/// </summary>
-internal sealed class SyncManifest
-{
-    public List<SyncFileEntry>? Files { get; set; }
-}
-
-/// <summary>
-/// Entry in sync manifest.
-/// </summary>
-internal sealed class SyncFileEntry
-{
-    public required string Path { get; set; }
-    public string? Checksum { get; set; }
-    public long Size { get; set; }
-}
+// SyncManifest and SyncFileEntry are now defined in OrbitMesh.Core.Models

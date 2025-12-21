@@ -1,18 +1,28 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.Logging;
-using OrbitMesh.Host.Controllers;
+using OrbitMesh.Core.Models;
 
 namespace OrbitMesh.Host.Services;
 
 /// <summary>
 /// Local file system implementation of file storage service.
 /// </summary>
-public sealed class LocalFileStorageService : IFileStorageService
+public sealed class LocalFileStorageService : IFileStorageService, IDisposable
 {
     private readonly string _rootPath;
     private readonly ILogger<LocalFileStorageService> _logger;
     private readonly FileExtensionContentTypeProvider _contentTypeProvider;
+
+    // Locking for manifest generation to prevent race conditions
+    private readonly SemaphoreSlim _manifestLock = new(1, 1);
+
+    // Track sequence numbers per path for manifest versioning
+    private readonly ConcurrentDictionary<string, long> _sequenceNumbers = new(StringComparer.OrdinalIgnoreCase);
+
+    // Cache of last computed content hashes to detect changes
+    private readonly ConcurrentDictionary<string, string> _lastContentHashes = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Creates a new local file storage service.
@@ -199,25 +209,80 @@ public sealed class LocalFileStorageService : IFileStorageService
             return null;
         }
 
-        var manifest = new SyncManifest();
-
-        foreach (var file in Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories))
+        // Lock to prevent race conditions during manifest generation
+        // This ensures consistent snapshots when multiple agents request simultaneously
+        await _manifestLock.WaitAsync(cancellationToken);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            var files = new List<SyncFileEntry>();
+            long totalSize = 0;
 
-            var relativePath = Path.GetRelativePath(fullPath, file).Replace('\\', '/');
-            var fileInfo = new FileInfo(file);
-            var checksum = await ComputeChecksumAsync(file, cancellationToken);
-
-            manifest.Files.Add(new SyncFileEntry
+            foreach (var file in Directory.EnumerateFiles(fullPath, "*", SearchOption.AllDirectories))
             {
-                Path = relativePath,
-                Checksum = checksum,
-                Size = fileInfo.Length
-            });
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var relativePath = Path.GetRelativePath(fullPath, file).Replace('\\', '/');
+                var fileInfo = new FileInfo(file);
+                var checksum = await ComputeChecksumAsync(file, cancellationToken);
+
+                files.Add(new SyncFileEntry
+                {
+                    Path = relativePath,
+                    Checksum = checksum,
+                    Size = fileInfo.Length
+                });
+
+                totalSize += fileInfo.Length;
+            }
+
+            // Compute content hash (time-agnostic version identifier)
+            var contentHash = SyncManifest.ComputeContentHash(files);
+
+            // Update sequence number only if content changed
+            var sequenceNumber = GetOrUpdateSequenceNumber(path, contentHash);
+
+            return new SyncManifest
+            {
+                ContentHash = contentHash,
+                SequenceNumber = sequenceNumber,
+                GeneratedAt = DateTimeOffset.UtcNow,
+                Files = files,
+                TotalSize = totalSize,
+                FileCount = files.Count
+            };
+        }
+        finally
+        {
+            _manifestLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Gets the sequence number for a path, incrementing if content has changed.
+    /// </summary>
+    private long GetOrUpdateSequenceNumber(string path, string contentHash)
+    {
+        var normalizedPath = path.ToUpperInvariant();
+
+        // Check if content has changed
+        if (_lastContentHashes.TryGetValue(normalizedPath, out var lastHash) &&
+            string.Equals(lastHash, contentHash, StringComparison.OrdinalIgnoreCase))
+        {
+            // Content unchanged, return existing sequence number
+            return _sequenceNumbers.GetOrAdd(normalizedPath, 1);
         }
 
-        return manifest;
+        // Content changed, increment sequence number
+        _lastContentHashes[normalizedPath] = contentHash;
+        return _sequenceNumbers.AddOrUpdate(normalizedPath, 1, (_, seq) => seq + 1);
+    }
+
+    /// <summary>
+    /// Disposes the manifest lock semaphore.
+    /// </summary>
+    public void Dispose()
+    {
+        _manifestLock.Dispose();
     }
 
     /// <inheritdoc />

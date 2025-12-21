@@ -1,4 +1,4 @@
-import type { Agent, Job, Workflow, WorkflowInstance, ServerStatus, ApiToken, BootstrapToken } from '@/types'
+import type { Agent, Job, Workflow, WorkflowInstance, ServerStatus, ApiToken, BootstrapToken, DeploymentProfile, DeploymentExecution, DeploymentStatusCounts, PagedResult } from '@/types'
 
 const API_BASE = '/api'
 const AUTH_STORAGE_KEY = 'orbitmesh_auth'
@@ -198,4 +198,73 @@ export async function setBootstrapTokenAutoApprove(autoApprove: boolean): Promis
     method: 'PUT',
     body: JSON.stringify({ autoApprove }),
   })
+}
+
+// Deployment Profiles
+export async function getDeploymentProfiles(): Promise<DeploymentProfile[]> {
+  return fetchApi('/deployment/profiles')
+}
+
+export async function getDeploymentProfile(id: string): Promise<DeploymentProfile> {
+  return fetchApi(`/deployment/profiles/${id}`)
+}
+
+export async function createDeploymentProfile(profile: Omit<DeploymentProfile, 'id' | 'createdAt' | 'lastDeployedAt'>): Promise<DeploymentProfile> {
+  return fetchApi('/deployment/profiles', {
+    method: 'POST',
+    body: JSON.stringify(profile),
+  })
+}
+
+export async function updateDeploymentProfile(id: string, profile: Partial<DeploymentProfile>): Promise<DeploymentProfile> {
+  return fetchApi(`/deployment/profiles/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(profile),
+  })
+}
+
+export async function deleteDeploymentProfile(id: string): Promise<void> {
+  await fetchApi(`/deployment/profiles/${id}`, { method: 'DELETE' })
+}
+
+export async function triggerDeployment(profileId: string): Promise<DeploymentExecution> {
+  return fetchApi(`/deployment/profiles/${profileId}/deploy`, {
+    method: 'POST',
+  })
+}
+
+export async function getMatchingAgents(profileId: string): Promise<Array<{ id: string; name: string }>> {
+  return fetchApi(`/deployment/profiles/${profileId}/agents`)
+}
+
+// Deployment Executions
+export async function getDeploymentExecutions(options?: {
+  profileId?: string
+  status?: string
+  page?: number
+  pageSize?: number
+}): Promise<PagedResult<DeploymentExecution>> {
+  const params = new URLSearchParams()
+  if (options?.profileId) params.append('profileId', options.profileId)
+  if (options?.status) params.append('status', options.status)
+  if (options?.page) params.append('page', options.page.toString())
+  if (options?.pageSize) params.append('pageSize', options.pageSize.toString())
+  const query = params.toString() ? `?${params.toString()}` : ''
+  return fetchApi(`/deployment/executions${query}`)
+}
+
+export async function getDeploymentExecution(id: string): Promise<DeploymentExecution> {
+  return fetchApi(`/deployment/executions/${id}`)
+}
+
+export async function cancelDeployment(executionId: string): Promise<void> {
+  await fetchApi(`/deployment/executions/${executionId}/cancel`, { method: 'POST' })
+}
+
+export async function getInProgressDeployments(): Promise<DeploymentExecution[]> {
+  return fetchApi('/deployment/executions/in-progress')
+}
+
+export async function getDeploymentStatusCounts(): Promise<DeploymentStatusCounts> {
+  return fetchApi('/deployment/status')
 }

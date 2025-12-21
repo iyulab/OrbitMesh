@@ -130,3 +130,104 @@ export interface BootstrapToken {
   createdAt: string
   lastRegeneratedAt?: string
 }
+
+// Deployment types
+export interface DeploymentProfile {
+  id: string
+  name: string
+  description?: string
+  sourcePath: string
+  targetAgentPattern: string
+  targetPath: string
+  watchForChanges: boolean
+  debounceMs: number
+  includePatterns?: string[]
+  excludePatterns?: string[]
+  deleteOrphans: boolean
+  preDeployScript?: DeploymentScript
+  postDeployScript?: DeploymentScript
+  transferMode: FileTransferMode
+  isEnabled: boolean
+  createdAt: string
+  lastDeployedAt?: string
+}
+
+export interface DeploymentScript {
+  command: string
+  arguments?: string[]
+  workingDirectory?: string
+  timeoutSeconds: number
+  continueOnError: boolean
+}
+
+export type FileTransferMode = 'Auto' | 'Http' | 'P2P'
+
+export interface DeploymentExecution {
+  id: string
+  profileId: string
+  status: DeploymentStatus
+  trigger: DeploymentTrigger
+  startedAt: string
+  completedAt?: string
+  totalAgents: number
+  successfulAgents: number
+  failedAgents: number
+  bytesTransferred: number
+  filesTransferred: number
+  errorMessage?: string
+  agentResults?: AgentDeploymentResult[]
+}
+
+export type DeploymentStatus = 'Pending' | 'InProgress' | 'Succeeded' | 'Failed' | 'PartialSuccess' | 'Cancelled'
+
+export type DeploymentTrigger = 'Manual' | 'FileWatch' | 'Api' | 'Scheduled'
+
+export interface AgentDeploymentResult {
+  agentId: string
+  agentName: string
+  status: AgentDeploymentStatus
+  startedAt: string
+  completedAt?: string
+  errorMessage?: string
+  preDeployResult?: ScriptExecutionResult
+  postDeployResult?: ScriptExecutionResult
+  fileSyncResult?: FileSyncExecutionResult
+}
+
+export type AgentDeploymentStatus = 'Pending' | 'RunningPreScript' | 'SyncingFiles' | 'RunningPostScript' | 'Succeeded' | 'Failed' | 'Skipped' | 'Unreachable'
+
+export interface ScriptExecutionResult {
+  success: boolean
+  exitCode: number
+  standardOutput?: string
+  standardError?: string
+  duration: string
+}
+
+export interface FileSyncExecutionResult {
+  success: boolean
+  filesCreated: number
+  filesUpdated: number
+  filesDeleted: number
+  bytesTransferred: number
+  transferMode: FileTransferMode
+  duration: string
+  errorMessage?: string
+}
+
+export interface DeploymentStatusCounts {
+  pending: number
+  inProgress: number
+  succeeded: number
+  failed: number
+  partialSuccess: number
+  cancelled: number
+}
+
+export interface PagedResult<T> {
+  items: T[]
+  totalCount: number
+  page: number
+  pageSize: number
+  totalPages: number
+}

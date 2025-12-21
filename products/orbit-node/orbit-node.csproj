@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\OrbitMesh.Node\OrbitMesh.Node.csproj" />
+    <ProjectReference Include="..\..\src\OrbitMesh.Update\OrbitMesh.Update.csproj" />
   </ItemGroup>
 
   <!-- Copy appsettings to publish folder -->

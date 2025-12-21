@@ -1,9 +1,12 @@
 using System.Globalization;
+using OrbitMesh.Core.Platform;
 using OrbitMesh.Host.Authentication;
 using OrbitMesh.Host.Extensions;
 using OrbitMesh.Host.Features;
 using OrbitMesh.Host.Services.Security;
 using OrbitMesh.Storage.Sqlite.Extensions;
+using OrbitMesh.Update.Extensions;
+using OrbitMesh.Update.Services;
 using Serilog;
 
 // Configure Serilog
@@ -17,6 +20,11 @@ Log.Logger = new LoggerConfiguration()
 try
 {
     Log.Information("Starting OrbitMesh Server");
+
+    // Initialize platform paths
+    var platformPaths = new PlatformPaths();
+    platformPaths.EnsureDirectoriesExist();
+    Log.Information("Data directory: {DataPath}", platformPaths.BasePath);
 
     var builder = WebApplication.CreateBuilder(args);
 
@@ -32,6 +40,7 @@ try
         });
 
         server.AddWorkflows();
+        server.AddDeployments();
 
         // Add built-in features based on configuration
         // Reads from OrbitMesh:Features section in appsettings.json
@@ -60,10 +69,21 @@ try
     builder.Services.Configure<SecurityOptions>(
         builder.Configuration.GetSection(SecurityOptions.SectionName));
 
-    // Add SQLite storage (for production persistence)
+    // Register platform paths
+    builder.Services.AddSingleton<IPlatformPaths>(platformPaths);
+
+    // Add SQLite storage with persistent path
     var connectionString = builder.Configuration.GetConnectionString("OrbitMesh")
-        ?? "Data Source=orbitmesh.db";
+        ?? $"Data Source={platformPaths.DatabasePath}";
     builder.Services.AddOrbitMeshSqliteStorage(connectionString);
+
+    // Add update service
+    builder.Services.AddOrbitMeshUpdate(options =>
+    {
+        options.ProductName = "orbit-host";
+        // Configure from appsettings if available
+        builder.Configuration.GetSection("OrbitMesh:Update").Bind(options);
+    });
 
     // Add API controllers with JSON enum string serialization
     builder.Services.AddControllers()
@@ -91,6 +111,19 @@ try
 
     // Initialize storage (creates database and tables if needed)
     await app.Services.InitializeOrbitMeshStorageAsync();
+
+    // Check for updates on startup
+    var updateService = app.Services.GetRequiredService<IUpdateService>();
+    var updateResult = await updateService.CheckAndApplyUpdateAsync();
+    if (updateResult.UpdatePending)
+    {
+        Log.Information("Update to v{Version} is being applied. Restarting...", updateResult.NewVersion);
+        return; // Exit for update script to apply
+    }
+    else if (updateResult.UpdateAvailable)
+    {
+        Log.Information("Update available: v{Version} (auto-update disabled)", updateResult.NewVersion);
+    }
 
     // Configure request pipeline
     if (app.Environment.IsDevelopment())

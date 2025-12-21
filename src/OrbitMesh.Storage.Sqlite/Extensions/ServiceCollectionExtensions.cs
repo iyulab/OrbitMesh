@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using OrbitMesh.Core.Storage;
 using OrbitMesh.Host.Services.Security;
+using OrbitMesh.Storage.Sqlite.Migrations;
 using OrbitMesh.Storage.Sqlite.Stores;
 
 namespace OrbitMesh.Storage.Sqlite.Extensions;
@@ -53,6 +54,7 @@ public static class ServiceCollectionExtensions
             opt.BusyTimeout = options.BusyTimeout;
             opt.EnableSecurityStores = options.EnableSecurityStores;
             opt.EnableCoreStores = options.EnableCoreStores;
+            opt.EnableDeploymentStores = options.EnableDeploymentStores;
         });
 
         // Register pooled DbContext factory for singleton services (like security stores)
@@ -74,6 +76,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped(sp =>
             sp.GetRequiredService<IDbContextFactory<OrbitMeshDbContext>>().CreateDbContext());
 
+        // Register schema migrator for database versioning
+        services.AddSingleton<SchemaMigrator>();
+
         // Register core storage (enabled by default)
         if (options.EnableCoreStores)
         {
@@ -88,6 +93,12 @@ public static class ServiceCollectionExtensions
         if (options.EnableSecurityStores)
         {
             RegisterSecurityStores(services);
+        }
+
+        // Register deployment stores (enabled by default)
+        if (options.EnableDeploymentStores)
+        {
+            RegisterDeploymentStores(services);
         }
 
         return services;
@@ -167,5 +178,14 @@ public static class ServiceCollectionExtensions
         {
             services.Remove(descriptor);
         }
+    }
+
+    private static void RegisterDeploymentStores(IServiceCollection services)
+    {
+        // Register SQLite-backed deployment stores as Singleton
+        // These stores use IDbContextFactory internally, so they can be safely
+        // registered as singletons and work correctly with SignalR hubs
+        services.AddSingleton<IDeploymentProfileStore, SqliteDeploymentProfileStore>();
+        services.AddSingleton<IDeploymentExecutionStore, SqliteDeploymentExecutionStore>();
     }
 }
