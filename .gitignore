@@ -121,3 +121,6 @@ CLAUDE.md
 
 # Auto-generated files
 **/routeTree.gen.ts
+
+# Local dev scripts
+kill-orbit.ps1

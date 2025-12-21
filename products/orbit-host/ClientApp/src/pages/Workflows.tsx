@@ -135,6 +135,7 @@ export default function Workflows() {
   const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null)
   const [expandedWorkflow, setExpandedWorkflow] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list')
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const queryClient = useQueryClient()
 
   const { data: workflows = [], isLoading: loadingWorkflows } = useQuery({
@@ -146,6 +147,24 @@ export default function Workflows() {
     queryKey: ['workflow-instances'],
     queryFn: () => getWorkflowInstances(),
   })
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true)
+    try {
+      const [workflowsData, instancesData] = await Promise.all([
+        getWorkflows(),
+        getWorkflowInstances(),
+      ])
+      queryClient.setQueryData(['workflows'], workflowsData)
+      queryClient.setQueryData(['workflow-instances'], instancesData)
+    } catch (error) {
+      console.error('Failed to refresh workflows:', error)
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  const isFetching = loadingWorkflows || loadingInstances || isRefreshing
 
   const duplicateMutation = useMutation({
     mutationFn: (workflowId: string) => duplicateWorkflow(workflowId),
@@ -231,13 +250,11 @@ export default function Workflows() {
           </div>
           <Button
             variant="outline"
-            onClick={() => {
-              queryClient.invalidateQueries({ queryKey: ['workflows'] })
-              queryClient.invalidateQueries({ queryKey: ['workflow-instances'] })
-            }}
+            onClick={handleRefresh}
+            disabled={isFetching}
           >
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
+            <RefreshCw className={`w-4 h-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
+            {isFetching ? 'Refreshing...' : 'Refresh'}
           </Button>
           <Button onClick={handleCreateWorkflow}>
             <Plus className="w-4 h-4 mr-2" />

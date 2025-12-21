@@ -31,6 +31,23 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
     return undefined as T
   }
 
+  // Check content-type before parsing as JSON
+  const contentType = response.headers.get('content-type')
+  if (!contentType || !contentType.includes('application/json')) {
+    console.warn(`API ${endpoint} returned non-JSON content-type: ${contentType}`)
+    const text = await response.text()
+    // If it looks like HTML, something is wrong
+    if (text.startsWith('<!') || text.startsWith('<html')) {
+      throw new Error(`API returned HTML instead of JSON for ${endpoint}`)
+    }
+    // Try to parse as JSON anyway
+    try {
+      return JSON.parse(text)
+    } catch {
+      throw new Error(`Invalid JSON response for ${endpoint}`)
+    }
+  }
+
   return response.json()
 }
 

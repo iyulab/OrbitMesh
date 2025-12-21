@@ -1,12 +1,22 @@
 <Project Sdk="Microsoft.NET.Sdk.Worker">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <!-- Platform-specific targeting: Windows with Forms, Others without -->
+    <TargetFramework Condition="$([MSBuild]::IsOSPlatform('Windows'))">net10.0-windows</TargetFramework>
+    <TargetFramework Condition="!$([MSBuild]::IsOSPlatform('Windows'))">net10.0</TargetFramework>
+
+    <!-- Windows: WinExe (no console), Others: Exe (console) -->
+    <OutputType Condition="$([MSBuild]::IsOSPlatform('Windows'))">WinExe</OutputType>
+    <OutputType Condition="!$([MSBuild]::IsOSPlatform('Windows'))">Exe</OutputType>
+
     <AssemblyName>OrbitMeshAgent</AssemblyName>
     <RootNamespace>OrbitMesh.Products.Agent</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+
+    <!-- Windows Forms for tray icon (Windows only) -->
+    <UseWindowsForms Condition="$([MSBuild]::IsOSPlatform('Windows'))">true</UseWindowsForms>
 
     <!-- Single-file publish settings -->
     <PublishSingleFile>true</PublishSingleFile>
@@ -21,6 +31,11 @@
   <ItemGroup>
     <PackageReference Include="Serilog.AspNetCore" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <!-- Windows-specific packages -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <PackageReference Include="Microsoft.Windows.Compatibility" />
   </ItemGroup>
 
   <ItemGroup>

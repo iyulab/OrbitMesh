@@ -178,12 +178,27 @@ function SubmitJobDialog({
 export default function Jobs() {
   const [showSubmitDialog, setShowSubmitDialog] = useState(false)
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const queryClient = useQueryClient()
 
   const { data: jobs = [], isLoading } = useQuery({
     queryKey: ['jobs', statusFilter],
     queryFn: () => getJobs(statusFilter === 'all' ? undefined : statusFilter),
   })
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true)
+    try {
+      const data = await getJobs(statusFilter === 'all' ? undefined : statusFilter)
+      queryClient.setQueryData(['jobs', statusFilter], data)
+    } catch (error) {
+      console.error('Failed to refresh jobs:', error)
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  const isFetching = isLoading || isRefreshing
 
   const cancelMutation = useMutation({
     mutationFn: cancelJob,
@@ -224,10 +239,11 @@ export default function Jobs() {
           </Select>
           <Button
             variant="outline"
-            onClick={() => queryClient.invalidateQueries({ queryKey: ['jobs'] })}
+            onClick={handleRefresh}
+            disabled={isFetching}
           >
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
+            <RefreshCw className={`w-4 h-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
+            {isFetching ? 'Refreshing...' : 'Refresh'}
           </Button>
           <Button onClick={() => setShowSubmitDialog(true)}>
             <Plus className="w-4 h-4 mr-2" />

@@ -314,7 +314,14 @@ public sealed class LocalFileStorageService : IFileStorageService, IDisposable
 
     private static async Task<string> ComputeChecksumAsync(string path, CancellationToken cancellationToken)
     {
-        await using var stream = File.OpenRead(path);
+        // Use FileShare.ReadWrite to allow concurrent access during manifest generation
+        await using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite,
+            bufferSize: 4096,
+            useAsync: true);
         var hash = await SHA256.HashDataAsync(stream, cancellationToken);
         return Convert.ToHexString(hash);
     }

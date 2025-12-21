@@ -10,28 +10,145 @@ using OrbitMesh.Update.Extensions;
 using OrbitMesh.Update.Services;
 using Serilog;
 
-// Configure Serilog
-Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
-    .WriteTo.Console(
-        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}",
-        formatProvider: CultureInfo.InvariantCulture)
-    .CreateLogger();
+#if WINDOWS
+using System.Windows.Forms;
+using OrbitMesh.Products.Server.Tray;
+#endif
 
-try
+// Configure Serilog - file logging for tray mode, console for others
+var logConfig = new LoggerConfiguration()
+    .MinimumLevel.Information();
+
+#if WINDOWS
+if (!Environment.GetCommandLineArgs().Contains("--console"))
 {
-    Log.Information("Starting OrbitMesh Server");
-
-    // Initialize platform paths
+    // Tray mode: log to file only
     var platformPaths = new PlatformPaths();
     platformPaths.EnsureDirectoriesExist();
-    Log.Information("Data directory: {DataPath}", platformPaths.BasePath);
+    var logPath = Path.Combine(platformPaths.LogsPath, "server-.log");
+    logConfig.WriteTo.File(logPath,
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 7,
+        outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}",
+        formatProvider: CultureInfo.InvariantCulture);
+}
+else
+#endif
+{
+    // Console mode
+    logConfig.WriteTo.Console(
+        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}",
+        formatProvider: CultureInfo.InvariantCulture);
+}
 
-    var builder = WebApplication.CreateBuilder(args);
+Log.Logger = logConfig.CreateLogger();
 
-    // Configure Serilog
-    builder.Host.UseSerilog();
+#if WINDOWS
+// Windows: Run as tray app unless --console flag is passed
+if (!Environment.GetCommandLineArgs().Contains("--console"))
+{
+    Application.SetHighDpiMode(HighDpiMode.SystemAware);
+    Application.EnableVisualStyles();
+    Application.SetCompatibleTextRenderingDefault(false);
 
+    using var trayContext = new TrayApplicationContext(
+        StartServerAsync,
+        "http://localhost:5000");
+
+    Application.Run(trayContext);
+}
+else
+{
+    // Console mode for debugging
+    await RunConsoleAsync();
+}
+#else
+// Linux/macOS: Run as console app
+await RunConsoleAsync();
+#endif
+
+return;
+
+// ============================================================================
+// Server startup logic
+// ============================================================================
+
+async Task StartServerAsync(CancellationToken cancellationToken)
+{
+    try
+    {
+        Log.Information("Starting OrbitMesh Server");
+
+        var platformPaths = new PlatformPaths();
+        platformPaths.EnsureDirectoriesExist();
+        Log.Information("Data directory: {DataPath}", platformPaths.BasePath);
+
+        var builder = WebApplication.CreateBuilder(args);
+
+        // Configure Serilog
+        builder.Host.UseSerilog();
+
+        ConfigureServices(builder, platformPaths);
+
+        var app = builder.Build();
+
+        await InitializeAndConfigureApp(app, platformPaths);
+
+        Log.Information("OrbitMesh Server listening on {Urls}", string.Join(", ", app.Urls));
+        await app.RunAsync(cancellationToken);
+    }
+    catch (OperationCanceledException)
+    {
+        Log.Information("Server shutdown requested");
+    }
+    catch (Exception ex)
+    {
+        Log.Fatal(ex, "Application terminated unexpectedly");
+        throw;
+    }
+    finally
+    {
+        await Log.CloseAndFlushAsync();
+    }
+}
+
+async Task RunConsoleAsync()
+{
+    try
+    {
+        Log.Information("Starting OrbitMesh Server");
+
+        var platformPaths = new PlatformPaths();
+        platformPaths.EnsureDirectoriesExist();
+        Log.Information("Data directory: {DataPath}", platformPaths.BasePath);
+
+        var builder = WebApplication.CreateBuilder(args);
+
+        // Configure Serilog
+        builder.Host.UseSerilog();
+
+        ConfigureServices(builder, platformPaths);
+
+        var app = builder.Build();
+
+        await InitializeAndConfigureApp(app, platformPaths);
+
+        Log.Information("OrbitMesh Server listening on {Urls}", string.Join(", ", app.Urls));
+        await app.RunAsync();
+    }
+    catch (Exception ex)
+    {
+        Log.Fatal(ex, "Application terminated unexpectedly");
+        Environment.ExitCode = 1;
+    }
+    finally
+    {
+        await Log.CloseAndFlushAsync();
+    }
+}
+
+void ConfigureServices(WebApplicationBuilder builder, IPlatformPaths platformPaths)
+{
     // Add OrbitMesh server services with workflows
     builder.Services.AddOrbitMeshServer(server =>
     {
@@ -44,7 +161,6 @@ try
         server.AddDeployments();
 
         // Add built-in features based on configuration
-        // Reads from OrbitMesh:Features section in appsettings.json
         server.AddBuiltInFeatures(builder.Configuration);
 
         server.ConfigureSignalR(hub =>
@@ -71,7 +187,7 @@ try
         builder.Configuration.GetSection(SecurityOptions.SectionName));
 
     // Register platform paths
-    builder.Services.AddSingleton<IPlatformPaths>(platformPaths);
+    builder.Services.AddSingleton(platformPaths);
 
     // Add SQLite storage with persistent path
     var connectionString = builder.Configuration.GetConnectionString("OrbitMesh")
@@ -82,12 +198,13 @@ try
     builder.Services.AddOrbitMeshUpdate(options =>
     {
         options.ProductName = "orbit-host";
-        // Configure from appsettings if available
         builder.Configuration.GetSection("OrbitMesh:Update").Bind(options);
     });
 
     // Add API controllers with JSON enum string serialization
+    // Include controllers from OrbitMesh.Host assembly
     builder.Services.AddControllers()
+        .AddApplicationPart(typeof(OrbitMesh.Host.Controllers.AgentsController).Assembly)
         .AddJsonOptions(options =>
         {
             options.JsonSerializerOptions.Converters.Add(
@@ -104,13 +221,13 @@ try
         });
     }
 
-    // Add admin authentication (reads from env var or appsettings.json)
+    // Add admin authentication
     builder.Services.AddAdminAuthentication(builder.Configuration);
+}
 
-    // Build the app
-    var app = builder.Build();
-
-    // Initialize storage (creates database and tables if needed)
+async Task InitializeAndConfigureApp(WebApplication app, IPlatformPaths platformPaths)
+{
+    // Initialize storage
     await app.Services.InitializeOrbitMeshStorageAsync();
 
     // Check for updates on startup
@@ -119,7 +236,7 @@ try
     if (updateResult.UpdatePending)
     {
         Log.Information("Update to v{Version} is being applied. Restarting...", updateResult.NewVersion);
-        return; // Exit for update script to apply
+        Environment.Exit(0);
     }
     else if (updateResult.UpdateAvailable)
     {
@@ -160,7 +277,7 @@ try
     app.MapControllers();
     app.MapHealthChecks("/health");
 
-    // SPA fallback - serve index.html for client-side routes
+    // SPA fallback
     app.MapFallback(async context =>
     {
         var file = embeddedProvider.GetFileInfo("index.html");
@@ -175,16 +292,4 @@ try
             context.Response.StatusCode = 404;
         }
     });
-
-    Log.Information("OrbitMesh Server listening on {Urls}", string.Join(", ", app.Urls));
-    await app.RunAsync();
-}
-catch (Exception ex)
-{
-    Log.Fatal(ex, "Application terminated unexpectedly");
-    Environment.ExitCode = 1;
-}
-finally
-{
-    await Log.CloseAndFlushAsync();
 }

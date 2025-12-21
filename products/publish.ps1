@@ -77,6 +77,10 @@ $dv = dotnet --version 2>$null
 if (-not $dv) { Write-Err ".NET SDK not found."; exit 1 }
 Write-Success ".NET SDK: $dv"
 
+$nv = node --version 2>$null
+if (-not $nv) { Write-Err "Node.js not found."; exit 1 }
+Write-Success "Node.js: $nv"
+
 if (($Target -eq "all" -or $Target -eq "server") -and -not (Test-Path $ServerProject)) { Write-Err "Server not found: $ServerProject"; exit 1 }
 if (($Target -eq "all" -or $Target -eq "agent") -and -not (Test-Path $AgentProject)) { Write-Err "Agent not found: $AgentProject"; exit 1 }
 Write-Success "Projects found"
@@ -95,6 +99,24 @@ if ($Target -eq "all" -or $Target -eq "agent") { if (Test-Path $AgentOutput) { R
 Write-Success "Ready"
 
 if ($Target -eq "all" -or $Target -eq "server") {
+    # Build frontend first
+    $ClientAppDir = Join-Path $ScriptDir "orbit-host\ClientApp"
+    if (Test-Path $ClientAppDir) {
+        Write-Step "Building Frontend (ClientApp)..."
+        Push-Location $ClientAppDir
+        try {
+            $ft = Get-Date
+            Write-Info "npm run build"
+            & npm run build
+            if ($LASTEXITCODE -ne 0) { Write-Err "Frontend build failed"; exit 1 }
+            $fd = (Get-Date) - $ft
+            Write-Success "Frontend done - Time: $([math]::Round($fd.TotalSeconds, 1))s"
+        }
+        finally {
+            Pop-Location
+        }
+    }
+
     Write-Step "Publishing Server..."
     $sArgs = @("publish", $ServerProject, "--output", $ServerOutput) + $CommonArgs
     Write-Info "dotnet $($sArgs -join ' ')"

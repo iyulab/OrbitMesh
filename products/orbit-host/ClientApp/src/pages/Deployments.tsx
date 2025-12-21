@@ -430,6 +430,7 @@ export default function Deployments() {
   const [editingProfile, setEditingProfile] = useState<DeploymentProfile | undefined>()
   const [selectedExecution, setSelectedExecution] = useState<DeploymentExecution | null>(null)
   const [executionDialogOpen, setExecutionDialogOpen] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   const queryClient = useQueryClient()
 
@@ -446,8 +447,27 @@ export default function Deployments() {
   const { data: statusCounts } = useQuery({
     queryKey: ['deployment-status-counts'],
     queryFn: getDeploymentStatusCounts,
-    refetchInterval: 5000,
   })
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true)
+    try {
+      const [profilesData, executionsData, statusData] = await Promise.all([
+        getDeploymentProfiles(),
+        getDeploymentExecutions({ pageSize: 10 }),
+        getDeploymentStatusCounts(),
+      ])
+      queryClient.setQueryData(['deployment-profiles'], profilesData)
+      queryClient.setQueryData(['deployment-executions'], executionsData)
+      queryClient.setQueryData(['deployment-status-counts'], statusData)
+    } catch (error) {
+      console.error('Failed to refresh deployments:', error)
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  const isFetching = profilesLoading || executionsLoading || isRefreshing
 
   const createMutation = useMutation({
     mutationFn: createDeploymentProfile,
@@ -540,8 +560,13 @@ export default function Deployments() {
           <p className="text-muted-foreground">Manage deployment profiles and monitor deployments</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="icon" onClick={() => queryClient.invalidateQueries()}>
-            <RefreshCw className="h-4 w-4" />
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={handleRefresh}
+            disabled={isFetching}
+          >
+            <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
           </Button>
           <Button onClick={() => { setEditingProfile(undefined); setDialogOpen(true) }}>
             <Plus className="h-4 w-4 mr-2" />

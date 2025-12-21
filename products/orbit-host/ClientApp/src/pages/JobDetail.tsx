@@ -26,13 +26,7 @@ export default function JobDetail() {
     queryKey: ['job', jobId],
     queryFn: () => getJob(jobId!),
     enabled: !!jobId,
-    refetchInterval: (query) => {
-      const data = query.state.data
-      if (data && ['Pending', 'Assigned', 'Acknowledged', 'Running'].includes(data.status)) {
-        return 3000
-      }
-      return false
-    },
+    // SignalR handles real-time updates (JobStatusChanged, JobProgress, JobCompleted, JobFailed)
   })
 
   const cancelMutation = useMutation({

@@ -37,6 +37,9 @@
     <!-- File Providers -->
     <PackageVersion Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.0" />
 
+    <!-- Windows Desktop (for tray icon) -->
+    <PackageVersion Include="Microsoft.Windows.Compatibility" Version="10.0.0" />
+
     <!-- Dependency Injection / Hosting -->
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />

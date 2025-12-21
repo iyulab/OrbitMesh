@@ -337,12 +337,27 @@ function AddAgentDialog({
 
 export default function Agents() {
   const [showAddDialog, setShowAddDialog] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const queryClient = useQueryClient()
 
   const { data: agents = [], isLoading } = useQuery({
     queryKey: ['agents'],
     queryFn: getAgents,
   })
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true)
+    try {
+      const data = await getAgents()
+      queryClient.setQueryData(['agents'], data)
+    } catch (error) {
+      console.error('Failed to refresh agents:', error)
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  const isFetching = isLoading || isRefreshing
 
   const serverUrl = typeof window !== 'undefined'
     ? `${window.location.protocol}//${window.location.host}`
@@ -365,10 +380,11 @@ export default function Agents() {
         <div className="flex gap-3">
           <Button
             variant="outline"
-            onClick={() => queryClient.invalidateQueries({ queryKey: ['agents'] })}
+            onClick={handleRefresh}
+            disabled={isFetching}
           >
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
+            <RefreshCw className={`w-4 h-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
+            {isFetching ? 'Refreshing...' : 'Refresh'}
           </Button>
           <Button onClick={() => setShowAddDialog(true)}>
             <Plus className="w-4 h-4 mr-2" />
