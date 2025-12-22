@@ -11,8 +11,10 @@ import {
   RefreshCw,
   ChevronRight,
   Ticket,
+  FolderSync,
 } from 'lucide-react'
 import { getAgents, getBootstrapToken, regenerateBootstrapToken } from '@/api/client'
+import type { Agent } from '@/types'
 import { AgentStatusBadge } from '@/components/ui/status-badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -28,6 +30,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { toast } from '@/components/ui/sonner'
+import { AgentFileSyncDialog } from '@/components/deployment/AgentFileSyncDialog'
 
 function generateBootstrapAgentCommand(serverUrl: string, token: string, options?: {
   name?: string
@@ -338,6 +341,7 @@ function AddAgentDialog({
 export default function Agents() {
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [fileSyncAgent, setFileSyncAgent] = useState<Agent | null>(null)
   const queryClient = useQueryClient()
 
   const { data: agents = [], isLoading } = useQuery({
@@ -492,11 +496,22 @@ export default function Agents() {
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <Link to={`/agents/${agent.id}`}>
-                        <Button variant="ghost" size="sm">
-                          <ChevronRight className="w-4 h-4" />
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setFileSyncAgent(agent)}
+                          disabled={agent.status === 'Disconnected'}
+                          title="Configure File Sync"
+                        >
+                          <FolderSync className="w-4 h-4" />
                         </Button>
-                      </Link>
+                        <Link to={`/agents/${agent.id}`}>
+                          <Button variant="ghost" size="sm">
+                            <ChevronRight className="w-4 h-4" />
+                          </Button>
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -512,6 +527,15 @@ export default function Agents() {
         onOpenChange={setShowAddDialog}
         serverUrl={serverUrl}
       />
+
+      {/* File Sync Dialog */}
+      {fileSyncAgent && (
+        <AgentFileSyncDialog
+          open={!!fileSyncAgent}
+          onOpenChange={(open) => !open && setFileSyncAgent(null)}
+          agent={fileSyncAgent}
+        />
+      )}
     </div>
   )
 }

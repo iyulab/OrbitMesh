@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OrbitMesh.Core.Enums;
+using OrbitMesh.Core.FileTransfer;
 using OrbitMesh.Core.Models;
 using OrbitMesh.Core.Storage;
 using OrbitMesh.Host.Controllers;
@@ -22,6 +23,7 @@ public sealed class DeploymentService : IDeploymentService
     private readonly IJobManager _jobManager;
     private readonly IAgentRegistry _agentRegistry;
     private readonly IFileStorageService _fileStorage;
+    private readonly IFileTransferService? _fileTransferService;
     private readonly DeploymentOptions _options;
     private readonly ILogger<DeploymentService> _logger;
 
@@ -43,7 +45,8 @@ public sealed class DeploymentService : IDeploymentService
         IAgentRegistry agentRegistry,
         IFileStorageService fileStorage,
         IOptions<DeploymentOptions> options,
-        ILogger<DeploymentService> logger)
+        ILogger<DeploymentService> logger,
+        IFileTransferService? fileTransferService = null)
     {
         _profileStore = profileStore;
         _executionStore = executionStore;
@@ -51,6 +54,7 @@ public sealed class DeploymentService : IDeploymentService
         _jobManager = jobManager;
         _agentRegistry = agentRegistry;
         _fileStorage = fileStorage;
+        _fileTransferService = fileTransferService;
         _options = options.Value;
         _logger = logger;
     }
@@ -493,54 +497,16 @@ public sealed class DeploymentService : IDeploymentService
                 manifest = FilterManifest(manifest, profile.IncludePatterns, profile.ExcludePatterns);
             }
 
-            var payload = new
+            // Use centralized file transfer service when available
+            if (_fileTransferService is not null && manifest.Files is { Count: > 0 })
             {
-                sourceUrl = $"{_options.ServerUrl}/api/files",
-                sourcePath = profile.SourcePath,
-                destinationPath = profile.TargetPath,
-                manifest,
-                deleteOrphans = profile.DeleteOrphans
-            };
-
-            var request = JobRequest.Create("orbit:file.sync") with
-            {
-                TargetAgentId = agentId,
-                Parameters = JsonSerializer.SerializeToUtf8Bytes(payload),
-                Timeout = TimeSpan.FromMinutes(30) // File sync can take longer
-            };
-
-            var job = await EnqueueAndWaitAsync(request, ct);
-
-            var duration = DateTimeOffset.UtcNow - startTime;
-
-            if (job.Status == JobStatus.Completed && job.Result is not null)
-            {
-                var resultData = job.Result.Data;
-                if (resultData is not null)
-                {
-                    using var doc = JsonDocument.Parse(resultData);
-                    var root = doc.RootElement;
-
-                    return new FileSyncExecutionResult
-                    {
-                        Success = true,
-                        FilesCreated = root.TryGetProperty("filesCreated", out var fc) ? fc.GetInt32() : 0,
-                        FilesUpdated = root.TryGetProperty("filesUpdated", out var fu) ? fu.GetInt32() : 0,
-                        FilesDeleted = root.TryGetProperty("filesDeleted", out var fd) ? fd.GetInt32() : 0,
-                        BytesTransferred = root.TryGetProperty("bytesTransferred", out var bt) ? bt.GetInt64() : 0,
-                        TransferMode = profile.TransferMode,
-                        Duration = duration
-                    };
-                }
+                return await SyncFilesViaTransferServiceAsync(
+                    agentId, profile, manifest, startTime, ct);
             }
 
-            return new FileSyncExecutionResult
-            {
-                Success = false,
-                ErrorMessage = job.Error ?? "File sync failed",
-                TransferMode = profile.TransferMode,
-                Duration = duration
-            };
+            // Fallback to job-based transfer
+            return await SyncFilesViaJobAsync(
+                agentId, profile, manifest, startTime, ct);
         }
         catch (Exception ex)
         {
@@ -552,6 +518,112 @@ public sealed class DeploymentService : IDeploymentService
                 Duration = DateTimeOffset.UtcNow - startTime
             };
         }
+    }
+
+    private async Task<FileSyncExecutionResult> SyncFilesViaTransferServiceAsync(
+        string agentId,
+        DeploymentProfile profile,
+        SyncManifest manifest,
+        DateTimeOffset startTime,
+        CancellationToken ct)
+    {
+        // Create batch transfer request using the profile's transfer mode directly
+        var batchRequest = new BatchFileTransferRequest
+        {
+            TargetAgentId = agentId,
+            Mode = profile.TransferMode,
+            DeleteOrphans = profile.DeleteOrphans,
+            MaxConcurrency = 4,
+            Files = manifest.Files.Select(f => new FileTransferItem
+            {
+                RelativePath = f.Path,
+                Checksum = f.Checksum,
+                Size = f.Size,
+                LastModified = DateTimeOffset.UtcNow // SyncFileEntry doesn't track modification time
+            }).ToList()
+        };
+
+        _logger.LogInformation(
+            "Transferring {FileCount} files to agent {AgentId} via {Mode}",
+            manifest.Files.Count, agentId, profile.TransferMode);
+
+        var result = await _fileTransferService!.TransferBatchAsync(batchRequest, null, ct);
+
+        var duration = DateTimeOffset.UtcNow - startTime;
+
+        // Determine the primary transfer mode based on which method transferred more files
+        var actualMode = result.TransfersViaP2P > result.TransfersViaHttp
+            ? FileTransferMode.P2PDirect
+            : FileTransferMode.Http;
+
+        return new FileSyncExecutionResult
+        {
+            Success = result.Success,
+            FilesCreated = result.FilesTransferred,
+            FilesUpdated = 0,
+            FilesDeleted = result.FilesDeleted,
+            BytesTransferred = result.BytesTransferred,
+            TransferMode = actualMode,
+            Duration = duration,
+            ErrorMessage = result.Error
+        };
+    }
+
+    private async Task<FileSyncExecutionResult> SyncFilesViaJobAsync(
+        string agentId,
+        DeploymentProfile profile,
+        SyncManifest manifest,
+        DateTimeOffset startTime,
+        CancellationToken ct)
+    {
+        var payload = new
+        {
+            sourceUrl = $"{_options.ServerUrl}/api/files",
+            sourcePath = profile.SourcePath,
+            destinationPath = profile.TargetPath,
+            manifest,
+            deleteOrphans = profile.DeleteOrphans
+        };
+
+        var request = JobRequest.Create("orbit:file.sync") with
+        {
+            TargetAgentId = agentId,
+            Parameters = JsonSerializer.SerializeToUtf8Bytes(payload),
+            Timeout = TimeSpan.FromMinutes(30) // File sync can take longer
+        };
+
+        var job = await EnqueueAndWaitAsync(request, ct);
+
+        var duration = DateTimeOffset.UtcNow - startTime;
+
+        if (job.Status == JobStatus.Completed && job.Result is not null)
+        {
+            var resultData = job.Result.Data;
+            if (resultData is not null)
+            {
+                using var doc = JsonDocument.Parse(resultData);
+                var root = doc.RootElement;
+
+                return new FileSyncExecutionResult
+                {
+                    Success = true,
+                    FilesCreated = root.TryGetProperty("filesCreated", out var fc) ? fc.GetInt32() : 0,
+                    FilesUpdated = root.TryGetProperty("filesUpdated", out var fu) ? fu.GetInt32() : 0,
+                    FilesDeleted = root.TryGetProperty("filesDeleted", out var fd) ? fd.GetInt32() : 0,
+                    BytesTransferred = root.TryGetProperty("bytesTransferred", out var bt) ? bt.GetInt64() : 0,
+                    TransferMode = profile.TransferMode,
+                    Duration = duration
+                };
+            }
+        }
+
+        return new FileSyncExecutionResult
+        {
+            Success = false,
+            ErrorMessage = job.Error ?? "File sync failed",
+            TransferMode = profile.TransferMode,
+            Duration = duration
+        };
     }
 
     private static SyncManifest FilterManifest(

@@ -1,3 +1,4 @@
+using OrbitMesh.Core.FileTransfer.Protocol;
 using OrbitMesh.Core.Transport.Models;
 
 namespace OrbitMesh.Host.Services.P2P;
@@ -70,4 +71,40 @@ public interface IPeerCoordinator
     /// <param name="toAgentId">The target agent.</param>
     /// <returns>The connection state, or null if no connection exists.</returns>
     PeerConnectionState? GetConnectionState(string fromAgentId, string toAgentId);
+
+    /// <summary>
+    /// Gets peer information for a specific agent.
+    /// </summary>
+    /// <param name="agentId">The agent ID.</param>
+    /// <returns>Peer information, or null if not connected.</returns>
+    PeerInfo? GetPeerInfo(string agentId);
+
+    /// <summary>
+    /// Sends a file chunk to a peer via P2P.
+    /// </summary>
+    /// <param name="agentId">Target agent ID.</param>
+    /// <param name="chunk">File chunk to send.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task SendFileChunkAsync(string agentId, P2PFileChunk chunk, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Information about a P2P peer.
+/// </summary>
+public record PeerInfo
+{
+    /// <summary>Agent ID.</summary>
+    public required string AgentId { get; init; }
+
+    /// <summary>Whether the peer is currently connected via P2P.</summary>
+    public bool IsConnected { get; init; }
+
+    /// <summary>NAT information for the peer.</summary>
+    public NatInfo? NatInfo { get; init; }
+
+    /// <summary>Last activity timestamp.</summary>
+    public DateTimeOffset? LastActivity { get; init; }
+
+    /// <summary>Round trip time in milliseconds.</summary>
+    public int? RoundTripTimeMs { get; init; }
 }

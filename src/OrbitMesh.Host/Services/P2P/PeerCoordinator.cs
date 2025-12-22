@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using MessagePack;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OrbitMesh.Core.FileTransfer.Protocol;
 using OrbitMesh.Core.Transport.Models;
 using OrbitMesh.Host.Services;
 
@@ -199,5 +201,63 @@ public class PeerCoordinator : IPeerCoordinator
         return string.CompareOrdinal(agentA, agentB) < 0
             ? $"{agentA}:{agentB}"
             : $"{agentB}:{agentA}";
+    }
+
+    /// <inheritdoc />
+    public PeerInfo? GetPeerInfo(string agentId)
+    {
+        // Check if agent is P2P capable
+        if (!_p2pCapableAgents.TryGetValue(agentId, out var capable) || !capable)
+        {
+            return null;
+        }
+
+        // Find any connection state involving this agent
+        var connectionKey = _connectionStates.Keys
+            .FirstOrDefault(k => k.Contains(agentId, StringComparison.Ordinal));
+
+        var connectionState = connectionKey != null
+            ? _connectionStates.GetValueOrDefault(connectionKey)
+            : null;
+
+        var isConnected = connectionState?.Status == PeerConnectionStatus.Connected;
+
+        return new PeerInfo
+        {
+            AgentId = agentId,
+            IsConnected = isConnected,
+            NatInfo = GetCachedNatInfo(agentId),
+            LastActivity = connectionState?.ConnectedAt
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task SendFileChunkAsync(
+        string agentId,
+        P2PFileChunk chunk,
+        CancellationToken cancellationToken = default)
+    {
+        var peerInfo = GetPeerInfo(agentId);
+        if (peerInfo is null || !peerInfo.IsConnected)
+        {
+            throw new InvalidOperationException($"No P2P connection to agent {agentId}");
+        }
+
+        // Serialize chunk using MessagePack
+        var data = MessagePackSerializer.Serialize(chunk, cancellationToken: cancellationToken);
+
+        // The actual sending would be done through the P2P transport
+        // For now, this is a placeholder that would integrate with LiteNetP2PTransport
+        _logger.LogDebug(
+            "Sending file chunk {ChunkIndex}/{Total} ({Size} bytes) to {AgentId}",
+            chunk.ChunkIndex,
+            chunk.IsLastChunk ? chunk.ChunkIndex + 1 : "?",
+            chunk.Data.Length,
+            agentId);
+
+        // TODO: Integrate with actual P2P transport when available
+        // await _p2pTransport.SendAsync(agentId, data, cancellationToken);
+
+        await Task.CompletedTask;
     }
 }

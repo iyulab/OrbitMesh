@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -9,14 +10,17 @@ import {
   Activity,
   Cpu,
   HardDrive,
+  FolderSync,
 } from 'lucide-react'
 import { getAgent, getJobs } from '@/api/client'
 import { AgentStatusBadge, JobStatusBadge } from '@/components/ui/status-badge'
 import { Button } from '@/components/ui/button'
+import { AgentFileSyncDialog } from '@/components/deployment/AgentFileSyncDialog'
 
 export default function AgentDetail() {
   const { agentId } = useParams<{ agentId: string }>()
   const navigate = useNavigate()
+  const [showFileSyncDialog, setShowFileSyncDialog] = useState(false)
 
   const { data: agent, isLoading: loadingAgent, error } = useQuery({
     queryKey: ['agent', agentId],
@@ -75,7 +79,15 @@ export default function AgentDetail() {
             <p className="text-sm text-slate-500 dark:text-slate-400 font-mono">{agent.id}</p>
           </div>
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-3">
+          <Button
+            variant="outline"
+            onClick={() => setShowFileSyncDialog(true)}
+            disabled={agent.status === 'Disconnected'}
+          >
+            <FolderSync className="w-4 h-4 mr-2" />
+            File Sync
+          </Button>
           <AgentStatusBadge status={agent.status} />
         </div>
       </div>
@@ -244,6 +256,13 @@ export default function AgentDetail() {
           </div>
         )}
       </div>
+
+      {/* File Sync Dialog */}
+      <AgentFileSyncDialog
+        open={showFileSyncDialog}
+        onOpenChange={setShowFileSyncDialog}
+        agent={agent}
+      />
     </div>
   )
 }
