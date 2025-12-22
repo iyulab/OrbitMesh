@@ -241,6 +241,33 @@ public sealed class NodeCredentialManager : IDisposable
         return Path.Combine(appData, "OrbitMesh", "node-credentials.json");
     }
 
+    /// <summary>
+    /// Loads the stored node ID from credentials file if it exists.
+    /// Returns null if no credentials exist.
+    /// </summary>
+    /// <param name="credentialsPath">Optional custom credentials path.</param>
+    /// <returns>The stored node ID or null.</returns>
+    public static string? LoadStoredNodeId(string? credentialsPath = null)
+    {
+        var path = credentialsPath ?? GetDefaultCredentialsPath();
+
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(path);
+            var credentials = JsonSerializer.Deserialize<NodeCredentials>(json);
+            return credentials?.NodeId;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {

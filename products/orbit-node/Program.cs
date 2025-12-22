@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO;
 using OrbitMesh.Core.Platform;
 using OrbitMesh.Node;
 using OrbitMesh.Node.BuiltIn;
@@ -8,7 +9,7 @@ using OrbitMesh.Update.Services;
 using Serilog;
 
 #if WINDOWS
-using System.Windows.Forms;
+using System.Windows;
 using OrbitMesh.Products.Agent.Tray;
 #endif
 
@@ -44,13 +45,24 @@ Log.Logger = logConfig.CreateLogger();
 // Windows: Run as tray app unless --console flag is passed
 if (!Environment.GetCommandLineArgs().Contains("--console"))
 {
-    Application.SetHighDpiMode(HighDpiMode.SystemAware);
-    Application.EnableVisualStyles();
-    Application.SetCompatibleTextRenderingDefault(false);
-
-    using var trayContext = new TrayApplicationContext(StartAgentWithSettingsAsync);
-
-    Application.Run(trayContext);
+    // WPF requires STA thread - create one explicitly
+    var staThread = new Thread(() =>
+    {
+        var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        TrayApplication? trayApp = null;
+        app.Startup += (_, _) =>
+        {
+            trayApp = new TrayApplication(StartAgentWithSettingsAsync);
+        };
+        app.Exit += (_, _) =>
+        {
+            trayApp?.Dispose();
+        };
+        app.Run();
+    });
+    staThread.SetApartmentState(ApartmentState.STA);
+    staThread.Start();
+    staThread.Join();
 }
 else
 {
@@ -119,7 +131,7 @@ void ConfigureServicesWithSettings(HostApplicationBuilder builder, IPlatformPath
     builder.Logging.AddSerilog();
 
     // Use settings from tray dialog (priority) or fall back to configuration
-    var serverUrl = settings.ServerUrl;
+    var serverUrl = settings.NormalizedServerUrl;
     var bootstrapToken = settings.BootstrapToken;
     var agentName = !string.IsNullOrEmpty(settings.AgentName)
         ? settings.AgentName

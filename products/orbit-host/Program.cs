@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO;
 using Microsoft.Extensions.FileProviders;
 using OrbitMesh.Core.Platform;
 using OrbitMesh.Host.Authentication;
@@ -11,7 +12,7 @@ using OrbitMesh.Update.Services;
 using Serilog;
 
 #if WINDOWS
-using System.Windows.Forms;
+using System.Windows;
 using OrbitMesh.Products.Server.Tray;
 #endif
 
@@ -47,15 +48,24 @@ Log.Logger = logConfig.CreateLogger();
 // Windows: Run as tray app unless --console flag is passed
 if (!Environment.GetCommandLineArgs().Contains("--console"))
 {
-    Application.SetHighDpiMode(HighDpiMode.SystemAware);
-    Application.EnableVisualStyles();
-    Application.SetCompatibleTextRenderingDefault(false);
-
-    using var trayContext = new TrayApplicationContext(
-        StartServerAsync,
-        "http://localhost:5000");
-
-    Application.Run(trayContext);
+    // WPF requires STA thread - create one explicitly
+    var staThread = new Thread(() =>
+    {
+        var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        TrayApplication? trayApp = null;
+        app.Startup += (_, _) =>
+        {
+            trayApp = new TrayApplication(StartServerAsync, "http://localhost:5000");
+        };
+        app.Exit += (_, _) =>
+        {
+            trayApp?.Dispose();
+        };
+        app.Run();
+    });
+    staThread.SetApartmentState(ApartmentState.STA);
+    staThread.Start();
+    staThread.Join();
 }
 else
 {

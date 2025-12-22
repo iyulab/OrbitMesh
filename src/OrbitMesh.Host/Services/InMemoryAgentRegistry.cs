@@ -15,6 +15,19 @@ public class InMemoryAgentRegistry : IAgentRegistry
     /// <inheritdoc />
     public Task RegisterAsync(AgentInfo agent, CancellationToken cancellationToken = default)
     {
+        // Clean up any disconnected agents with the same name+hostname (prevents duplicates on restart)
+        var duplicates = _agents.Values
+            .Where(a => a.Id != agent.Id
+                && a.Name == agent.Name
+                && a.Hostname == agent.Hostname
+                && a.Status == AgentStatus.Disconnected)
+            .ToList();
+
+        foreach (var duplicate in duplicates)
+        {
+            _agents.TryRemove(duplicate.Id, out _);
+        }
+
         _agents.AddOrUpdate(agent.Id, agent, (_, _) => agent);
         return Task.CompletedTask;
     }

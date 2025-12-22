@@ -87,7 +87,7 @@ $serverScript = Join-Path $tempDir "run-server.ps1"
 `$env:ASPNETCORE_ENVIRONMENT = 'Development'
 `$env:ORBITMESH_ADMIN_PASSWORD = 'admin'
 Write-Host 'Starting OrbitMesh Server (Development)...' -ForegroundColor Cyan
-dotnet run --project "$serverProject" --no-build
+dotnet run --project "$serverProject" --no-build -- --console
 "@ | Set-Content -Path $serverScript -Encoding UTF8
 
 # React dev server script
@@ -112,7 +112,7 @@ for ($i = 1; $i -le $AgentCount; $i++) {
 Write-Host 'Waiting $delay seconds for server startup...' -ForegroundColor Yellow
 Start-Sleep -Seconds $delay
 Write-Host 'Starting OrbitMesh Agent: $agentName' -ForegroundColor Cyan
-dotnet run --project "$agentProject" --no-build -- --OrbitMesh:ServerUrl="$ServerUrl" --OrbitMesh:AgentName="$agentName"
+dotnet run --project "$agentProject" --no-build -- --console --OrbitMesh:ServerUrl="$ServerUrl" --OrbitMesh:AgentName="$agentName"
 "@ | Set-Content -Path $agentScript -Encoding UTF8
     $agentScripts += $agentScript
 }

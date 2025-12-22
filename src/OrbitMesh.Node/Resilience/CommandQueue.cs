@@ -229,7 +229,12 @@ public sealed class CommandQueue : IDisposable
             return;
         }
 
+        // Clear queue before marking as disposed to avoid ObjectDisposedException
+        while (_queue.TryDequeue(out _))
+        {
+            Interlocked.Decrement(ref _count);
+        }
+
         _disposed = true;
-        Clear();
     }
 }

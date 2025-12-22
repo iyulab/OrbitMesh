@@ -1,4 +1,5 @@
 #if WINDOWS
+using System.IO;
 using System.Text.Json;
 using OrbitMesh.Core.Platform;
 
@@ -16,9 +17,32 @@ internal sealed class AgentSettings
     };
 
     /// <summary>
-    /// Server URL (e.g., http://localhost:5000/agent)
+    /// Server URL (e.g., http://localhost:5000 or http://localhost:5000/agent)
     /// </summary>
     public string ServerUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets the normalized server URL with /agent path appended if missing.
+    /// </summary>
+    public string NormalizedServerUrl => NormalizeServerUrl(ServerUrl);
+
+    /// <summary>
+    /// Normalizes the server URL to ensure it ends with /agent.
+    /// </summary>
+    private static string NormalizeServerUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return url;
+
+        url = url.TrimEnd('/');
+
+        if (!url.EndsWith("/agent", StringComparison.OrdinalIgnoreCase))
+        {
+            url += "/agent";
+        }
+
+        return url;
+    }
 
     /// <summary>
     /// Bootstrap token for TOFU enrollment

@@ -23,6 +23,7 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
     private readonly IBootstrapTokenService _bootstrapTokenService;
     private readonly INodeEnrollmentService _enrollmentService;
     private readonly INodeCredentialService _credentialService;
+    private readonly IDashboardNotifier _dashboardNotifier;
     private readonly SecurityOptions _securityOptions;
     private readonly ILogger<AgentHub> _logger;
 
@@ -45,6 +46,7 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
         IBootstrapTokenService bootstrapTokenService,
         INodeEnrollmentService enrollmentService,
         INodeCredentialService credentialService,
+        IDashboardNotifier dashboardNotifier,
         IOptions<SecurityOptions> securityOptions,
         ILogger<AgentHub> logger)
     {
@@ -55,6 +57,7 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
         _bootstrapTokenService = bootstrapTokenService;
         _enrollmentService = enrollmentService;
         _credentialService = credentialService;
+        _dashboardNotifier = dashboardNotifier;
         _securityOptions = securityOptions.Value;
         _logger = logger;
     }
@@ -197,6 +200,10 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
                 agentId,
                 Context.ConnectionId,
                 exception?.Message ?? "Normal disconnect");
+
+            // Notify dashboard clients
+            await _dashboardNotifier.NotifyAgentDisconnected(agentId);
+            await _dashboardNotifier.NotifyAgentStatusChanged(agentId, AgentStatus.Disconnected.ToString());
         }
 
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, AllAgentsGroup);
@@ -242,6 +249,10 @@ public class AgentHub : Hub<IAgentClient>, IServerHub
                 agentInfo.Id,
                 agentInfo.Name,
                 string.Join(", ", agentInfo.Capabilities.Select(c => c.Name)));
+
+            // Notify dashboard clients
+            await _dashboardNotifier.NotifyAgentConnected(agentInfo.Id);
+            await _dashboardNotifier.NotifyAgentStatusChanged(agentInfo.Id, AgentStatus.Ready.ToString());
 
             return AgentRegistrationResult.Succeeded(TimeSpan.FromSeconds(30));
         }

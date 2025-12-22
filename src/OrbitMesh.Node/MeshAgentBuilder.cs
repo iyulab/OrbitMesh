@@ -21,7 +21,7 @@ public sealed class MeshAgentBuilder
     private readonly List<string> _tags = [];
     private readonly Dictionary<string, string> _metadata = new();
 
-    private string _agentId = Guid.NewGuid().ToString("N");
+    private string? _agentId;
     private string _agentName = Environment.MachineName;
     private string? _group;
     private string? _accessToken;
@@ -348,6 +348,11 @@ public sealed class MeshAgentBuilder
         var credentialManagerLogger = _loggerFactory.CreateLogger<NodeCredentialManager>();
         var credentialManager = new NodeCredentialManager(_credentialsPath, credentialManagerLogger);
 
+        // Determine agent ID: use stored ID if available, otherwise use configured or generate new
+        var agentId = _agentId
+            ?? NodeCredentialManager.LoadStoredNodeId(_credentialsPath)
+            ?? Guid.NewGuid().ToString("N");
+
         // Create retry policy with exponential backoff
         var retryPolicy = new ExponentialBackoffRetryPolicy(_resilienceOptions);
 
@@ -366,7 +371,7 @@ public sealed class MeshAgentBuilder
 
         var agentInfo = new AgentInfo
         {
-            Id = _agentId,
+            Id = agentId,
             Name = _agentName,
             Group = _group,
             Status = AgentStatus.Created,

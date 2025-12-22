@@ -1,22 +1,27 @@
 #if WINDOWS
 using System.Drawing;
-using System.Windows.Forms;
+using System.IO;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using Hardcodet.Wpf.TaskbarNotification;
 using Microsoft.Win32;
 
 namespace OrbitMesh.Products.Agent.Tray;
 
 /// <summary>
-/// Windows tray application context for OrbitMesh Agent.
+/// WPF-based tray application for OrbitMesh Agent.
 /// </summary>
-internal sealed class TrayApplicationContext : ApplicationContext
+internal sealed class TrayApplication : IDisposable
 {
-    private readonly NotifyIcon _notifyIcon;
+    private readonly TaskbarIcon _notifyIcon;
     private readonly Func<AgentSettings, CancellationToken, Task> _startAgent;
-    private readonly ToolStripMenuItem _startMenuItem;
-    private readonly ToolStripMenuItem _stopMenuItem;
-    private readonly ToolStripMenuItem _restartMenuItem;
-    private readonly ToolStripMenuItem _autoStartMenuItem;
-    private readonly ToolStripMenuItem _serverSettingsMenuItem;
+    private readonly MenuItem _startMenuItem;
+    private readonly MenuItem _stopMenuItem;
+    private readonly MenuItem _restartMenuItem;
+    private readonly MenuItem _autoStartMenuItem;
+    private readonly MenuItem _serverSettingsMenuItem;
 
     private CancellationTokenSource? _cts;
     private Task? _agentTask;
@@ -32,42 +37,54 @@ internal sealed class TrayApplicationContext : ApplicationContext
         Stopping
     }
 
-    public TrayApplicationContext(Func<AgentSettings, CancellationToken, Task> startAgent)
+    public TrayApplication(Func<AgentSettings, CancellationToken, Task> startAgent)
     {
         _startAgent = startAgent;
         _settings = AgentSettings.Load();
 
-        // Create tray icon
-        _notifyIcon = new NotifyIcon
-        {
-            Icon = CreateIcon(AgentState.Stopped),
-            Text = "OrbitMesh Agent - Stopped",
-            Visible = true
-        };
-
         // Create menu items
-        _startMenuItem = new ToolStripMenuItem("Start", null, OnStartClick) { Enabled = true };
-        _stopMenuItem = new ToolStripMenuItem("Stop", null, OnStopClick) { Enabled = false };
-        _restartMenuItem = new ToolStripMenuItem("Restart", null, OnRestartClick) { Enabled = false };
-        _serverSettingsMenuItem = new ToolStripMenuItem("Server Settings...", null, OnServerSettingsClick);
-        _autoStartMenuItem = new ToolStripMenuItem("Start with Windows", null, OnAutoStartClick)
+        _startMenuItem = new MenuItem { Header = "Start" };
+        _startMenuItem.Click += OnStartClick;
+
+        _stopMenuItem = new MenuItem { Header = "Stop", IsEnabled = false };
+        _stopMenuItem.Click += OnStopClick;
+
+        _restartMenuItem = new MenuItem { Header = "Restart", IsEnabled = false };
+        _restartMenuItem.Click += OnRestartClick;
+
+        _serverSettingsMenuItem = new MenuItem { Header = "Server Settings..." };
+        _serverSettingsMenuItem.Click += OnServerSettingsClick;
+
+        _autoStartMenuItem = new MenuItem
         {
-            Checked = AutoStartManager.IsAutoStartEnabled("OrbitMeshAgent")
+            Header = "Start with Windows",
+            IsCheckable = true,
+            IsChecked = AutoStartManager.IsAutoStartEnabled("OrbitMeshAgent")
         };
+        _autoStartMenuItem.Click += OnAutoStartClick;
+
+        var exitMenuItem = new MenuItem { Header = "Exit" };
+        exitMenuItem.Click += OnExit;
 
         // Create context menu
-        var contextMenu = new ContextMenuStrip();
+        var contextMenu = new ContextMenu();
         contextMenu.Items.Add(_startMenuItem);
         contextMenu.Items.Add(_stopMenuItem);
         contextMenu.Items.Add(_restartMenuItem);
-        contextMenu.Items.Add(new ToolStripSeparator());
+        contextMenu.Items.Add(new Separator());
         contextMenu.Items.Add(_serverSettingsMenuItem);
         contextMenu.Items.Add(_autoStartMenuItem);
-        contextMenu.Items.Add(new ToolStripSeparator());
-        contextMenu.Items.Add("Exit", null, OnExit);
+        contextMenu.Items.Add(new Separator());
+        contextMenu.Items.Add(exitMenuItem);
 
-        _notifyIcon.ContextMenuStrip = contextMenu;
-        _notifyIcon.DoubleClick += OnServerSettingsClick;
+        // Create tray icon
+        _notifyIcon = new TaskbarIcon
+        {
+            Icon = CreateIcon(AgentState.Stopped),
+            ToolTipText = "OrbitMesh Agent - Stopped",
+            ContextMenu = contextMenu
+        };
+        _notifyIcon.TrayMouseDoubleClick += (_, _) => OnServerSettingsClick(null, null!);
 
         // Enable auto-start on first run
         EnableAutoStartOnFirstRun();
@@ -80,19 +97,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         else
         {
             // Show settings dialog on first run if not configured
-            BeginInvoke(() => OnServerSettingsClick(null, EventArgs.Empty));
-        }
-    }
-
-    private void BeginInvoke(Action action)
-    {
-        if (_notifyIcon.ContextMenuStrip?.InvokeRequired == true)
-        {
-            _notifyIcon.ContextMenuStrip.BeginInvoke(action);
-        }
-        else
-        {
-            action();
+            _ = Application.Current.Dispatcher.BeginInvoke(() => OnServerSettingsClick(null, null!));
         }
     }
 
@@ -105,7 +110,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (key?.GetValue(firstRunValue) == null)
         {
             AutoStartManager.SetAutoStart("OrbitMeshAgent", true);
-            _autoStartMenuItem.Checked = true;
+            _autoStartMenuItem.IsChecked = true;
             key?.SetValue(firstRunValue, "true");
         }
     }
@@ -114,18 +119,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         using var bitmap = new Bitmap(32, 32);
         using var g = Graphics.FromImage(bitmap);
-        g.Clear(Color.Transparent);
+        g.Clear(System.Drawing.Color.Transparent);
 
         var color = state switch
         {
-            AgentState.Running => Color.FromArgb(0, 153, 76),   // Green
-            AgentState.Starting or AgentState.Stopping => Color.FromArgb(255, 165, 0), // Orange
-            _ => Color.FromArgb(128, 128, 128)                   // Gray
+            AgentState.Running => System.Drawing.Color.FromArgb(0, 153, 76),     // Green
+            AgentState.Starting or AgentState.Stopping => System.Drawing.Color.FromArgb(255, 165, 0), // Orange
+            _ => System.Drawing.Color.FromArgb(128, 128, 128)                     // Gray
         };
 
         using var brush = new SolidBrush(color);
         g.FillEllipse(brush, 2, 2, 28, 28);
-        using var pen = new Pen(Color.White, 2);
+        using var pen = new System.Drawing.Pen(System.Drawing.Color.White, 2);
         g.DrawEllipse(pen, 8, 8, 16, 16);
 
         return Icon.FromHandle(bitmap.GetHicon());
@@ -143,15 +148,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _ => "Stopped"
         };
 
-        BeginInvoke(() =>
+        _ = Application.Current.Dispatcher.BeginInvoke(() =>
         {
             _notifyIcon.Icon = CreateIcon(newState);
-            _notifyIcon.Text = $"OrbitMesh Agent - {stateText}";
+            _notifyIcon.ToolTipText = $"OrbitMesh Agent - {stateText}";
 
-            _startMenuItem.Enabled = newState == AgentState.Stopped;
-            _stopMenuItem.Enabled = newState == AgentState.Running;
-            _restartMenuItem.Enabled = newState == AgentState.Running;
-            _serverSettingsMenuItem.Enabled = newState == AgentState.Stopped;
+            _startMenuItem.IsEnabled = newState == AgentState.Stopped;
+            _stopMenuItem.IsEnabled = newState == AgentState.Running;
+            _restartMenuItem.IsEnabled = newState == AgentState.Running;
+            _serverSettingsMenuItem.IsEnabled = newState == AgentState.Stopped;
         });
     }
 
@@ -163,8 +168,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (!_settings.IsConfigured)
         {
             MessageBox.Show("Please configure server settings first.", "OrbitMesh Agent",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
-            OnServerSettingsClick(null, EventArgs.Empty);
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            OnServerSettingsClick(null, null!);
             return;
         }
 
@@ -184,10 +189,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
             catch (Exception ex)
             {
-                BeginInvoke(() =>
+                _ = Application.Current.Dispatcher.BeginInvoke(() =>
                 {
                     MessageBox.Show($"Agent error: {ex.Message}", "OrbitMesh Agent",
-                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBoxButton.OK, MessageBoxImage.Error);
                 });
             }
             finally
@@ -223,40 +228,40 @@ internal sealed class TrayApplicationContext : ApplicationContext
         UpdateState(AgentState.Stopped);
     }
 
-    private void OnStartClick(object? sender, EventArgs e)
+    private void OnStartClick(object sender, RoutedEventArgs e)
     {
         _ = StartAgentAsync();
     }
 
-    private async void OnStopClick(object? sender, EventArgs e)
+    private async void OnStopClick(object sender, RoutedEventArgs e)
     {
         await StopAgentAsync();
     }
 
-    private async void OnRestartClick(object? sender, EventArgs e)
+    private async void OnRestartClick(object sender, RoutedEventArgs e)
     {
         await StopAgentAsync();
-        await Task.Delay(500); // Brief pause
+        await Task.Delay(500);
         await StartAgentAsync();
     }
 
-    private async void OnServerSettingsClick(object? sender, EventArgs e)
+    private async void OnServerSettingsClick(object? sender, RoutedEventArgs e)
     {
-        // Stop agent before editing settings
         var wasRunning = _state == AgentState.Running;
         if (wasRunning)
         {
             await StopAgentAsync();
         }
 
-        using var form = new ServerSettingsForm(_settings);
-        if (form.ShowDialog() == DialogResult.OK)
-        {
-            _settings = AgentSettings.Load(); // Reload settings
+        var window = new ServerSettingsWindow(_settings);
+        var result = window.ShowDialog();
 
-            if (form.SettingsChanged || wasRunning)
+        if (result == true)
+        {
+            _settings = AgentSettings.Load();
+
+            if (window.SettingsChanged || wasRunning)
             {
-                // Start agent with new settings
                 if (_settings.IsConfigured)
                 {
                     await StartAgentAsync();
@@ -265,48 +270,33 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
         else if (wasRunning && _settings.IsConfigured)
         {
-            // Restart with original settings if cancelled
             await StartAgentAsync();
         }
     }
 
-    private void OnAutoStartClick(object? sender, EventArgs e)
+    private void OnAutoStartClick(object sender, RoutedEventArgs e)
     {
-        var newState = !_autoStartMenuItem.Checked;
+        var newState = _autoStartMenuItem.IsChecked;
         AutoStartManager.SetAutoStart("OrbitMeshAgent", newState);
-        _autoStartMenuItem.Checked = newState;
     }
 
-    private async void OnExit(object? sender, EventArgs e)
+    private async void OnExit(object sender, RoutedEventArgs e)
     {
         _isDisposed = true;
-
         await StopAgentAsync();
-
-        _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
-
-        Application.Exit();
+        Application.Current.Shutdown();
     }
 
-    protected override void Dispose(bool disposing)
+    public void Dispose()
     {
-        if (disposing && !_isDisposed)
+        if (!_isDisposed)
         {
             _isDisposed = true;
             _cts?.Cancel();
             _cts?.Dispose();
-
-            _startMenuItem.Dispose();
-            _stopMenuItem.Dispose();
-            _restartMenuItem.Dispose();
-            _serverSettingsMenuItem.Dispose();
-            _autoStartMenuItem.Dispose();
-
-            _notifyIcon.ContextMenuStrip?.Dispose();
             _notifyIcon.Dispose();
         }
-        base.Dispose(disposing);
     }
 }
 #endif

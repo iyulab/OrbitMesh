@@ -15,8 +15,8 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
 
-    <!-- Windows Forms for tray icon (Windows only) -->
-    <UseWindowsForms Condition="$([MSBuild]::IsOSPlatform('Windows'))">true</UseWindowsForms>
+    <!-- WPF for better DPI support (Windows only) -->
+    <UseWPF Condition="$([MSBuild]::IsOSPlatform('Windows'))">true</UseWPF>
 
     <!-- Single-file publish settings -->
     <PublishSingleFile>true</PublishSingleFile>
@@ -43,6 +43,7 @@
   <!-- Windows-specific packages -->
   <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <PackageReference Include="Microsoft.Windows.Compatibility" />
+    <PackageReference Include="Hardcodet.NotifyIcon.Wpf" />
   </ItemGroup>
 
   <!-- Embed wwwroot as resources -->
